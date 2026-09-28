@@ -1,94 +1,94 @@
 # Antigravity Quota Monitor
 
-Ein leichtgewichtiges, modernes Windows System-Tray-Tool zur Echtzeit-Überwachung deiner Google Antigravity (`agy`) API-Quoten und Modell-Limits (Gemini Flash/Pro, Claude Sonnet/Opus, GPT-OSS).
+A lightweight, modern Windows System Tray utility for real-time monitoring of your Google Antigravity (`agy`) API quotas and model group limits (Gemini Flash/Pro, Claude Sonnet/Opus, GPT-OSS).
 
-Mit Windows 11 **Glassmorphism / Acrylic UI**, frei verschiebbarem **Floating Window**, stufenloser **Größenanpassung an allen Rändern**, **sekundengenauem Live-Countdown** und **automatischem Zuklappen** bei Klick außerhalb.
+Featuring a heavily curved Windows 11 **Glassmorphism / Acrylic UI**, draggable **Floating Window**, seamless multi-border resizing, **real-time second-by-second countdowns**, and **auto-close on click-outside**.
 
 ---
 
-## 🤖 Installiere mit Agenten (Prompt)
+## 🤖 Install with Agent (Prompt)
 
-Kopiere einfach den folgenden Prompt und gib ihn deinem KI-Agenten (z. B. in OpenCode, Cursor, Claude Code, Windsurf oder Antigravity CLI):
+Copy the following prompt and hand it directly to your AI agent (in OpenCode, Cursor, Claude Code, Windsurf, or Antigravity CLI):
 
 ```text
-Installiere und starte den Antigravity Quota Monitor für Windows:
-1. Klone das Repository in mein Benutzerverzeichnis:
+Install and start the Antigravity Quota Monitor for Windows:
+1. Clone the repository into my user profile directory:
    git clone https://github.com/I-N-O-A/antigravity-quota-monitor.git "%USERPROFILE%\antigravity-quota-monitor"
-2. Wechsle in das Verzeichnis:
+2. Switch to the directory:
    cd "%USERPROFILE%\antigravity-quota-monitor"
-3. Installiere die benötigten Python-Pakete:
+3. Install required Python packages:
    pip install -r requirements.txt
-4. Starte das Tool lautlos im Hintergrund:
+4. Start the tool silently in the background:
    wscript.exe start_silent.vbs
-5. Erstelle eine Verknüpfung auf dem Desktop:
+5. Create a desktop shortcut:
    powershell -NoProfile -ExecutionPolicy Bypass -File create_desktop_shortcut.ps1
-Prüfe abschließend mit 'Get-Process pythonw', ob der Prozess aktiv im Hintergrund läuft.
+Finally, verify that the process is running in the background with 'Get-Process pythonw'.
 ```
 
 ---
 
-## 🛠️ Manuelle Installation
+## 🛠️ Manual Installation
 
-### Voraussetzungen
-* **Betriebssystem**: Windows 10 oder Windows 11
-* **Python**: Python 3.10 oder höher (im Windows-PATH)
-* **Antigravity CLI**: `agy` installiert und eingeloggt (`agy -p "/usage"` liefert Quoten)
+### Requirements
+* **Operating System**: Windows 10 or Windows 11
+* **Python**: Python 3.10 or higher (added to Windows PATH)
+* **Antigravity CLI**: `agy` installed and logged in (`agy -p "/usage"` returns quotas)
 
-### Schritt 1: Repository klonen
-Öffne PowerShell oder die Eingabeaufforderung (CMD):
+### Step 1: Clone Repository
+Open PowerShell or Command Prompt (CMD):
 ```powershell
 git clone https://github.com/I-N-O-A/antigravity-quota-monitor.git
 cd antigravity-quota-monitor
 ```
 
-### Schritt 2: Abhängigkeiten installieren
+### Step 2: Install Dependencies
 ```powershell
 pip install -r requirements.txt
 ```
-*(Installiert `pystray` für das Windows-Tray-Icon und `Pillow` für die dynamische Ringanzeige).*
+*(Installs `pystray` for the Windows system tray icon and `Pillow` for dynamic ring rendering).*
 
-### Schritt 3: Starten
-* **Lautlos im Hintergrund (ohne Konsolenfenster)**:
-  Doppelklick auf `start_silent.vbs`
-* **Alternativ mit Starter**:
-  Doppelklick auf `start.bat`
-* **Desktop-Verknüpfung erstellen (optional)**:
-  Doppelklick auf `create_desktop_shortcut.bat`
+### Step 3: Start Application
+* **Silently in the background (no console window)**:
+  Double-click `start_silent.vbs`
+* **Or with starter script**:
+  Double-click `start.bat`
+* **Create Desktop Shortcut (Optional)**:
+  Double-click `create_desktop_shortcut.bat`
 
 ---
 
-## 🎮 Bedienung & Features
+## 🎮 Controls & Features
 
-| Aktion | Funktion |
+| Action | Feature |
 | :--- | :--- |
-| **Linksklick auf Tray-Icon** | Öffnet oder schließt das Quota-Dashboard. |
-| **Kein störender Tooltip** | Hover mit der Maus über das Icon macht bewusst gar nichts. |
-| **Windows 11 Glass UI** | Moderne Acryl-/Glas-Optik mit abgerundeten Ecken und perfekt zentriertem AG-Icon im Ring. |
-| **Verschieben (Floating Window)** | Klicke auf die obere Titelleiste und ziehe das Fenster an eine beliebige Stelle auf dem Bildschirm. |
-| **Größe anpassen (Resize an allen Rändern)** | Ziehe an beliebigen Rändern oder Ecken (oben, unten, links, rechts, Ecken), um die Größe stufenlos anzupassen. |
-| **Dynamische Skalierung (Nie gecropped)** | Schriften und Abstände passen sich automatisch der Fenstergröße an, damit Inhalte nie abgeschnitten werden. |
-| **Automatisches Zuklappen** | Ein Klick außerhalb des Fensters schließt das Dashboard sofort automatisch. |
-| **Anpinnen (Sticky Mode)** | Klick auf `📌` oben rechts hält das Fenster als dauerhaftes Floating-Widget immer im Vordergrund, ohne zuzuklappen. |
-| **Live Countdown** | Die Reset-Zeiten der 5-Stunden- und Wochen-Limits zählen jede Sekunde live herunter. |
-| **Echtzeit-Synchronisierung** | Dauerhaft synchron im Hintergrund (solange Signal da ist, bleibt `● LIVE` ohne ständiges Umschalten). |
-| **Rechtsklick auf Tray-Icon** | Öffnet das Kontextmenü mit Optionen wie *Dashboard öffnen*, *Jetzt live aktualisieren*, *Autostart mit Windows* und *Beenden*. |
+| **Left-click on Tray Icon** | Toggles the quota dashboard open or closed. |
+| **No Intrusive Tooltip** | Hovering mouse over the icon does not show annoying tooltips. |
+| **Windows 11 Glass UI** | Heavily rounded frosted glass aesthetics with centered AG monogram ring icon. |
+| **Floating Window Drag** | Click and drag anywhere on the header bar to position the window freely. |
+| **Seamless Border Resizing** | Drag any of the 4 borders or 4 corners to resize smoothly (no indicator lines/boxes). |
+| **Dynamic Responsive Scaling & Scroll** | Font sizes scale adaptively with an integrated scrollbar when the window is compact. |
+| **Auto-Close on Click Outside** | Clicking anywhere outside the window closes the dashboard automatically. |
+| **Pin / Sticky Mode** | Click `📌` in the header to pin the window as a persistent floating widget. |
+| **Live Countdowns** | 5-hour and weekly reset countdowns tick every second with exact local reset timestamps. |
+| **Real-time Live Sync** | Seamless live polling every 10s while open, displaying a calm `● LIVE` badge. |
+| **Right-click on Tray Icon** | Context menu with options: *Open Dashboard*, *Refresh Now*, *Dock to Tray*, *Start with Windows*, *Exit*. |
 
-> **💡 Tipp für Windows 11:** Falls das Icon nach dem Start nicht direkt neben der Uhr sichtbar ist, klicke auf den kleinen Pfeil nach oben (`^` für ausgeblendete Symbole). Du kannst das `AG`-Icon einfach mit gedrückter linker Maustaste auf deine sichtbare Taskleiste herausziehen.
+> **💡 Windows 11 Tray Tip:** If the tray icon is placed in the hidden notification area by default, click the upward arrow (`^`) next to the clock and drag the `AG` icon onto your visible taskbar.
 >
-> **💡 Tipp zur Desktop-Verknüpfung:** Ein Doppelklick auf die Verknüpfung "Antigravity Quota Monitor" öffnet das Dashboard sofort direkt auf deinem Bildschirm – auch wenn das Tool bereits im Hintergrund im Tray aktiv ist.
+> **💡 Desktop Shortcut Tip:** Double-clicking the "Antigravity Quota Monitor" desktop shortcut instantly brings the dashboard into view, even when running silently in the background.
 
 ---
 
-## ⚙️ Autostart mit Windows
-Klicke mit der rechten Maustaste auf das Tray-Icon in der Taskleiste und wähle **🚀 Autostart mit Windows**. Das Tool startet ab dann bei jeder Windows-Anmeldung automatisch im Hintergrund.
+## ⚙️ Windows Autostart
+Right-click the tray icon in your taskbar and select **Start with Windows**. The tool will launch automatically on login.
 
 ---
 
-## 🛑 Tool beenden
-* Über das Tray-Icon: Rechtsklick -> **❌ Beenden**
-* Oder über das Skript: Doppelklick auf `stop.bat`
+## 🛑 Exit Application
+* Via Tray Icon: Right-click -> **Exit**
+* Or via script: Double-click `stop.bat`
 
 ---
 
-## 📄 Lizenz
-MIT License. Frei verwendbar.
+## 📄 License
+MIT License. Free to use and modify.

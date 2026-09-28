@@ -37,6 +37,6 @@ if %errorlevel% equ 0 (
     exit /b 0
 )
 
-echo [FEHLER] Python wurde nicht gefunden! Bitte installiere Python 3.10+ und fuege es zum PATH hinzu.
+echo [ERROR] Python was not found! Please install Python 3.10+ and add it to PATH.
 pause
 exit /b 1

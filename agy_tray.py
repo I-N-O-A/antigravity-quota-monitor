@@ -1,8 +1,8 @@
 """
 Antigravity Quota Monitor - Windows System Tray Utility
 Monitors API limits and usage for Gemini and Claude/GPT model groups in real-time.
-Features floating, multi-border resizable window, real-time second-by-second countdowns,
-Windows 11 glassmorphism/acrylic styling, and crisp centered tray icon.
+Features floating, resizable glassmorphic window, real-time second-by-second countdowns,
+Windows 11 acrylic styling, heavily rounded corners, and centered tray icon.
 """
 
 import os
@@ -80,8 +80,8 @@ DEFAULT_CONFIG = {
     "live_refresh_seconds": 10,
     "pinned": False,
     "theme": "dark",
-    "win_width": 390,
-    "win_height": 510,
+    "win_width": 380,
+    "win_height": 520,
     "custom_pos": False,
     "pos_x": None,
     "pos_y": None
@@ -120,7 +120,7 @@ def get_work_area():
     return rect.left, rect.top, rect.right, rect.bottom
 
 # Windows 11 DWM Styling: Rounded Corners, Dark Mode, Acrylic
-def apply_dwm_styling(root):
+def apply_dwm_styling(root, width=None, height=None):
     try:
         root.update_idletasks()
         hwnd = root.winfo_id()
@@ -141,6 +141,15 @@ def apply_dwm_styling(root):
         ctypes.windll.dwmapi.DwmSetWindowAttribute(
             top_hwnd, 38, ctypes.byref(val_acrylic), ctypes.sizeof(val_acrylic)
         )
+        
+        # 4. Strongly rounded window region for modern curved glass look
+        w = width if width else root.winfo_width()
+        h = height if height else root.winfo_height()
+        if w > 30 and h > 30:
+            corner_radius = 40
+            rgn = ctypes.windll.gdi32.CreateRoundRectRgn(0, 0, w + 1, h + 1, corner_radius, corner_radius)
+            if rgn:
+                ctypes.windll.user32.SetWindowRgn(top_hwnd, rgn, True)
     except Exception:
         pass
 
@@ -240,7 +249,7 @@ def fetch_usage_data():
             startupinfo=startupinfo
         )
         if proc.returncode != 0:
-            return None, f"Exit-Code {proc.returncode}: {proc.stderr.strip() or 'Fehler beim Abruf'}"
+            return None, f"Exit-Code {proc.returncode}: {proc.stderr.strip() or 'Failed to fetch usage data'}"
         
         stdout = proc.stdout.strip()
         s_idx = stdout.find("{")
@@ -253,7 +262,7 @@ def fetch_usage_data():
         cmd_data = data.get("command", {}).get("data", {})
         return cmd_data, None
     except subprocess.TimeoutExpired:
-        return None, "Zeitüberschreitung beim Abruf der Daten"
+        return None, "Timeout while querying usage data"
     except Exception as e:
         return None, str(e)
 
@@ -265,8 +274,8 @@ def format_countdown_seconds(target_dt, fraction=1.0):
         diff = int((target_dt - now_dt).total_seconds())
         if diff <= 0:
             if fraction >= 0.999:
-                return "⚡ 100% bereit"
-            return "⏳ Reset fällig • lädt nach"
+                return "100% Ready"
+            return "Reset pending • Refreshing"
         
         days = diff // 86400
         rem = diff % 86400
@@ -274,20 +283,24 @@ def format_countdown_seconds(target_dt, fraction=1.0):
         mins = (rem % 3600) // 60
         secs = rem % 60
         
+        # Local reset time display format: "4h 56m (09/29 00:05)"
+        local_target = target_dt.astimezone()
+        time_str = local_target.strftime("%m/%d %H:%M")
+        
         if days > 0:
-            return f"⏱ Reset in {days}T {hours}Std"
+            return f"{days}d {hours}h {mins}m ({time_str})"
         elif hours > 0:
-            return f"⏱ Reset in {hours}h {mins:02d}m {secs:02d}s"
+            return f"{hours}h {mins:02d}m {secs:02d}s ({time_str})"
         elif mins > 0:
-            return f"⏱ Reset in {mins}m {secs:02d}s"
+            return f"{mins}m {secs:02d}s ({time_str})"
         else:
-            return f"⏱ Reset in {secs}s"
+            return f"{secs}s ({time_str})"
     except Exception:
         return "Reset: --"
 
 def get_color_for_fraction(fraction):
     if fraction >= 0.50:
-        return "#10b981"  # Emerald Green
+        return "#10b981"  # Emerald Green (matching the reference UI)
     elif fraction >= 0.20:
         return "#f59e0b"  # Amber Orange
     else:
@@ -303,8 +316,8 @@ def create_tray_image(min_fraction=1.0):
     pad = 12
     draw.ellipse(
         (pad, pad, canvas_size - pad, canvas_size - pad),
-        fill=(18, 24, 38, 255),
-        outline=(55, 65, 81, 255),
+        fill=(14, 18, 30, 255),
+        outline=(50, 60, 80, 255),
         width=4
     )
     
@@ -312,7 +325,7 @@ def create_tray_image(min_fraction=1.0):
     track_pad = 24
     draw.ellipse(
         (track_pad, track_pad, canvas_size - track_pad, canvas_size - track_pad),
-        outline=(40, 50, 68, 255),
+        outline=(30, 40, 58, 255),
         width=18
     )
     
@@ -351,9 +364,9 @@ def create_tray_image(min_fraction=1.0):
 
 # UI Components: Rounded Pill Progress Bar
 class RoundedProgressBar(tk.Canvas):
-    def __init__(self, parent, height=8, bg_color="#182234", trough_color="#26344d", **kwargs):
+    def __init__(self, parent, height=6, bg_color="#131926", trough_color="#20293a", **kwargs):
         super().__init__(parent, height=height, bg=bg_color, highlightthickness=0, bd=0, **kwargs)
-        self.w = 320
+        self.w = 300
         self.h = height
         self.bg_color = bg_color
         self.trough_color = trough_color
@@ -362,7 +375,7 @@ class RoundedProgressBar(tk.Canvas):
         self.bind("<Configure>", self.on_resize)
     
     def on_resize(self, event):
-        if event.width > 10:
+        if event.width > 5:
             self.w = event.width
             self.draw_bar()
     
@@ -372,8 +385,8 @@ class RoundedProgressBar(tk.Canvas):
         self.draw_bar()
     
     def set_height(self, h):
-        self.h = h
-        self.config(height=h)
+        self.h = max(4, h)
+        self.config(height=self.h)
         self.draw_bar()
         
     def draw_bar(self):
@@ -433,18 +446,20 @@ class QuotaApp:
         self.resize_start_w = 0
         self.resize_start_h = 0
         
-        self.win_width = max(310, min(900, self.config.get("win_width", 390)))
-        self.win_height = max(360, min(1000, self.config.get("win_height", 510)))
+        self.win_width = max(280, min(800, self.config.get("win_width", 380)))
+        self.win_height = max(340, min(1000, self.config.get("win_height", 520)))
         
         # Init Tkinter Root
         self.root = tk.Tk()
         self.root.title("Antigravity Quota")
+        # Glassmorphic deep translucent obsidian background matching reference
         self.root.configure(bg="#0c101a")
         self.root.overrideredirect(True)
         self.root.attributes("-topmost", True)
-        # Frosted glass soft transparency
+        
+        # Soft translucent frosted glass effect
         try:
-            self.root.attributes("-alpha", 0.95)
+            self.root.attributes("-alpha", 0.94)
         except Exception:
             pass
         self.root.withdraw()  # Hidden on launch
@@ -502,26 +517,26 @@ class QuotaApp:
         self.root.after(40, self._process_queue)
 
     def setup_ui(self):
-        # Outer Glass Border Container
-        self.border_frame = tk.Frame(self.root, bg="#253246", bd=0)
-        self.border_frame.pack(fill="both", expand=True, padx=6, pady=6)
+        # Outer Glass Border Container with subtle edge
+        self.border_frame = tk.Frame(self.root, bg="#1a2233", bd=0)
+        self.border_frame.pack(fill="both", expand=True, padx=4, pady=4)
         
-        # Main interior container (Deep Slate Glass)
-        self.main_container = tk.Frame(self.border_frame, bg="#0f1422", padx=14, pady=12)
+        # Main interior container (Deep Frosted Glass Slate)
+        self.main_container = tk.Frame(self.border_frame, bg="#0d121f", padx=14, pady=12)
         self.main_container.pack(fill="both", expand=True, padx=1, pady=1)
         
-        # Header (Draggable Floating Window Bar)
-        self.header = tk.Frame(self.main_container, bg="#0f1422", cursor="fleur")
-        self.header.pack(fill="x", pady=(0, 10))
+        # Header (Clean, minimalist bar matching reference)
+        self.header = tk.Frame(self.main_container, bg="#0d121f", cursor="fleur")
+        self.header.pack(fill="x", pady=(0, 8))
         
         # Title Box
-        self.title_box = tk.Frame(self.header, bg="#0f1422", cursor="fleur")
+        self.title_box = tk.Frame(self.header, bg="#0d121f", cursor="fleur")
         self.title_box.pack(side="left", fill="x", expand=True)
         
-        title_row = tk.Frame(self.title_box, bg="#0f1422", cursor="fleur")
+        title_row = tk.Frame(self.title_box, bg="#0d121f", cursor="fleur")
         title_row.pack(anchor="w")
         
-        # Logo badge
+        # Antigravity icon badge (pill)
         self.logo_lbl = tk.Label(
             title_row,
             text="AG",
@@ -537,8 +552,8 @@ class QuotaApp:
             title_row,
             text="Antigravity Quota",
             font=("Segoe UI", 12, "bold"),
-            fg="#f8fafc",
-            bg="#0f1422",
+            fg="#ffffff",
+            bg="#0d121f",
             cursor="fleur"
         )
         self.title_lbl.pack(side="left")
@@ -555,31 +570,22 @@ class QuotaApp:
         )
         self.live_badge.pack(side="left", padx=(8, 0))
         
-        self.sub_lbl = tk.Label(
-            self.title_box,
-            text="Floating Window • An Rändern skalierbar",
-            font=("Segoe UI", 8),
-            fg="#94a3b8",
-            bg="#0f1422",
-            cursor="fleur"
-        )
-        self.sub_lbl.pack(anchor="w", pady=(2, 0))
-        
-        # Header action buttons (Pin, Close)
-        actions_box = tk.Frame(self.header, bg="#0f1422")
-        actions_box.pack(side="right", anchor="n")
+        # Header action buttons (Pin, Close) - Clean circular style
+        actions_box = tk.Frame(self.header, bg="#0d121f")
+        actions_box.pack(side="right", anchor="center")
         
         # Pin button
         self.pin_btn = tk.Label(
             actions_box,
             text="📌" if self.pinned else "📍",
-            font=("Segoe UI", 11),
-            fg="#38bdf8" if self.pinned else "#94a3b8",
-            bg="#0f1422",
+            font=("Segoe UI", 10),
+            fg="#38bdf8" if self.pinned else "#64748b",
+            bg="#0d121f",
             cursor="hand2",
-            padx=4
+            padx=4,
+            pady=2
         )
-        self.pin_btn.pack(side="left", padx=(0, 2))
+        self.pin_btn.pack(side="left", padx=(0, 4))
         self.pin_btn.bind("<Button-1>", lambda e: self.toggle_pin())
         
         # Close button
@@ -587,57 +593,86 @@ class QuotaApp:
             actions_box,
             text="✕",
             font=("Segoe UI", 11, "bold"),
-            fg="#94a3b8",
-            bg="#0f1422",
+            fg="#64748b",
+            bg="#0d121f",
             cursor="hand2",
-            padx=4
+            padx=4,
+            pady=2
         )
-        close_btn.pack(side="left", padx=(2, 0))
+        close_btn.pack(side="left")
         close_btn.bind("<Button-1>", lambda e: self.hide_window())
         close_btn.bind("<Enter>", lambda e: close_btn.config(fg="#ef4444"))
-        close_btn.bind("<Leave>", lambda e: close_btn.config(fg="#94a3b8"))
+        close_btn.bind("<Leave>", lambda e: close_btn.config(fg="#64748b"))
         
-        # Cards Container (dynamically adapts when resized)
-        self.cards_frame = tk.Frame(self.main_container, bg="#0f1422")
-        self.cards_frame.pack(fill="both", expand=True)
+        # Cards Scroll Container (Canvas + Scrollbar when needed)
+        self.scroll_canvas = tk.Canvas(self.main_container, bg="#0d121f", highlightthickness=0, bd=0)
+        self.scrollbar = tk.Scrollbar(self.main_container, orient="vertical", command=self.scroll_canvas.yview)
+        
+        self.cards_frame = tk.Frame(self.scroll_canvas, bg="#0d121f")
+        self.canvas_window = self.scroll_canvas.create_window((0, 0), window=self.cards_frame, anchor="nw")
+        
+        self.scroll_canvas.configure(xscrollcommand=None, yscrollcommand=self.scrollbar.set)
+        
+        self.scroll_canvas.pack(side="top", fill="both", expand=True)
+        
+        def _on_canvas_configure(event):
+            self.scroll_canvas.itemconfig(self.canvas_window, width=event.width)
+        self.scroll_canvas.bind("<Configure>", _on_canvas_configure)
+        
+        def _on_frame_configure(event):
+            self.scroll_canvas.configure(scrollregion=self.scroll_canvas.bbox("all"))
+            # Auto-hide/show scrollbar if content exceeds canvas height
+            if self.cards_frame.winfo_reqheight() > self.scroll_canvas.winfo_height() + 5:
+                if not self.scrollbar.winfo_ismapped():
+                    self.scrollbar.pack(side="right", fill="y", before=self.scroll_canvas)
+            else:
+                if self.scrollbar.winfo_ismapped():
+                    self.scrollbar.pack_forget()
+        self.cards_frame.bind("<Configure>", _on_frame_configure)
+        
+        # Mousewheel scrolling across all components
+        def _on_mousewheel(event):
+            if self.cards_frame.winfo_reqheight() > self.scroll_canvas.winfo_height():
+                self.scroll_canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+        self.root.bind_all("<MouseWheel>", _on_mousewheel)
         
         # Build Model Group Cards
         self.build_cards()
         
-        # Footer
-        self.footer = tk.Frame(self.main_container, bg="#0f1422")
-        self.footer.pack(fill="x", pady=(10, 0))
+        # Footer Bar (Compact, matching reference pill buttons)
+        self.footer = tk.Frame(self.main_container, bg="#0d121f")
+        self.footer.pack(fill="x", pady=(8, 0))
         
         self.status_lbl = tk.Label(
             self.footer,
-            text="Live synchronisiert",
+            text="Live synchronized",
             font=("Segoe UI", 9),
-            fg="#94a3b8",
-            bg="#0f1422"
+            fg="#64748b",
+            bg="#0d121f"
         )
-        self.status_lbl.pack(side="left")
+        self.status_lbl.pack(side="left", anchor="center")
         
         self.refresh_btn = tk.Label(
             self.footer,
-            text="🔄 Aktualisieren",
+            text="🔄 Refresh",
             font=("Segoe UI", 9, "bold"),
             fg="#f8fafc",
             bg="#1e293b",
             cursor="hand2",
-            padx=10,
-            pady=4
+            padx=12,
+            pady=5
         )
-        self.refresh_btn.pack(side="right")
+        self.refresh_btn.pack(side="right", anchor="center")
         self.refresh_btn.bind("<Button-1>", lambda e: self.trigger_refresh(silent=False))
         self.refresh_btn.bind("<Enter>", lambda e: self.refresh_btn.config(bg="#334155"))
         self.refresh_btn.bind("<Leave>", lambda e: self.refresh_btn.config(bg="#1e293b"))
 
     def setup_resize_borders(self):
-        """Creates 8 border resize handles along all edges and corners."""
+        """Creates 8 border resize handles along all edges and corners with clean seamless visuals."""
         bs = 6   # border thickness
-        cs = 12  # corner dimension
-        color = "#253246"
-        hover_color = "#38bdf8"
+        cs = 14  # corner dimension
+        # Match outer border frame background so there are NO bright indicator lines or colored squares!
+        color = "#1a2233"
         
         self.resize_handles = []
         
@@ -684,8 +719,7 @@ class QuotaApp:
             widget.bind("<Button-1>", lambda e, d=direction: self.start_resize(e, d))
             widget.bind("<B1-Motion>", self.do_resize)
             widget.bind("<ButtonRelease-1>", self.stop_resize)
-            widget.bind("<Enter>", lambda e, w=widget: w.config(bg=hover_color))
-            widget.bind("<Leave>", lambda e, w=widget: w.config(bg=color))
+            # DO NOT change background color on hover or press! (Clean glass styling)
             self.resize_handles.append(widget)
 
     def start_resize(self, event, direction):
@@ -712,23 +746,24 @@ class QuotaApp:
         
         # Horizontal resizing
         if "e" in self.resize_direction:
-            new_w = max(310, min(900, self.resize_start_w + dx))
+            new_w = max(280, min(800, self.resize_start_w + dx))
         elif "w" in self.resize_direction:
             target_w = self.resize_start_w - dx
-            new_w = max(310, min(900, target_w))
+            new_w = max(280, min(800, target_w))
             new_x = self.resize_start_win_x + (self.resize_start_w - new_w)
             
         # Vertical resizing
         if "s" in self.resize_direction:
-            new_h = max(360, min(1000, self.resize_start_h + dy))
+            new_h = max(340, min(1000, self.resize_start_h + dy))
         elif "n" in self.resize_direction:
             target_h = self.resize_start_h - dy
-            new_h = max(360, min(1000, target_h))
+            new_h = max(340, min(1000, target_h))
             new_y = self.resize_start_win_y + (self.resize_start_h - new_h)
             
         self.win_width = new_w
         self.win_height = new_h
         self.root.geometry(f"{new_w}x{new_h}+{new_x}+{new_y}")
+        apply_dwm_styling(self.root, new_w, new_h)
 
     def stop_resize(self, event):
         if self.is_resizing:
@@ -738,15 +773,16 @@ class QuotaApp:
             self.config["win_width"] = self.win_width
             self.config["win_height"] = self.win_height
             save_config(self.config)
+            apply_dwm_styling(self.root, self.win_width, self.win_height)
 
     def build_cards(self):
         # Card 1: Gemini Models
         self.gemini_card, self.gemini_widgets = self.create_group_card(
             title="Gemini Models",
-            subtitle="Gemini Flash, Gemini Pro",
+            subtitle="Gemini 2.5 Flash, Gemini 2.5 Pro",
             badge_color="#38bdf8"
         )
-        self.gemini_card.pack(fill="both", expand=True, pady=(0, 10))
+        self.gemini_card.pack(fill="x", expand=True, pady=(0, 8))
         
         # Card 2: Claude & GPT Models
         self.claude_card, self.claude_widgets = self.create_group_card(
@@ -754,58 +790,54 @@ class QuotaApp:
             subtitle="Claude Opus, Claude Sonnet, GPT-OSS",
             badge_color="#f59e0b"
         )
-        self.claude_card.pack(fill="both", expand=True)
+        self.claude_card.pack(fill="x", expand=True)
 
     def create_group_card(self, title, subtitle, badge_color):
-        # Card container with glass acrylic styling
-        card = tk.Frame(self.cards_frame, bg="#182234", padx=12, pady=10)
+        # Card container with glass acrylic styling matching reference
+        card = tk.Frame(self.cards_frame, bg="#131926", padx=12, pady=10)
         
         # Header row
-        head_row = tk.Frame(card, bg="#182234")
+        head_row = tk.Frame(card, bg="#131926")
         head_row.pack(fill="x", pady=(0, 6))
         
-        badge = tk.Frame(head_row, bg=badge_color, width=9, height=9)
-        badge.pack(side="left", padx=(0, 7), pady=(3, 0))
+        badge = tk.Frame(head_row, bg=badge_color, width=8, height=8)
+        badge.pack(side="left", padx=(0, 7), pady=(4, 0))
         
-        t_box = tk.Frame(head_row, bg="#182234")
-        t_box.pack(side="left")
+        t_box = tk.Frame(head_row, bg="#131926")
+        t_box.pack(side="left", fill="x", expand=True)
         
-        t_lbl = tk.Label(t_box, text=title, font=("Segoe UI", 11, "bold"), fg="#f8fafc", bg="#182234")
+        t_lbl = tk.Label(t_box, text=title, font=("Segoe UI", 11, "bold"), fg="#ffffff", bg="#131926")
         t_lbl.pack(anchor="w")
-        s_lbl = tk.Label(t_box, text=subtitle, font=("Segoe UI", 8), fg="#94a3b8", bg="#182234")
+        s_lbl = tk.Label(t_box, text=subtitle, font=("Segoe UI", 8), fg="#64748b", bg="#131926")
         s_lbl.pack(anchor="w")
         
-        # 5-Hour Bucket
-        b5_row = tk.Frame(card, bg="#182234")
-        b5_row.pack(fill="x", pady=(3, 2))
-        b5_title = tk.Label(b5_row, text="5-Stunden-Limit", font=("Segoe UI", 10, "bold"), fg="#cbd5e1", bg="#182234")
+        # 5-Hour Bucket (Clean minimalist styling matching screenshot)
+        b5_row = tk.Frame(card, bg="#131926")
+        b5_row.pack(fill="x", pady=(4, 1))
+        b5_title = tk.Label(b5_row, text="5h", font=("Segoe UI", 10, "bold"), fg="#cbd5e1", bg="#131926")
         b5_title.pack(side="left")
-        b5_pct = tk.Label(b5_row, text="--%", font=("Segoe UI", 13, "bold"), fg="#f8fafc", bg="#182234")
+        b5_pct = tk.Label(b5_row, text="--%", font=("Segoe UI", 12, "bold"), fg="#10b981", bg="#131926")
         b5_pct.pack(side="right")
         
-        b5_bar = RoundedProgressBar(card, height=8, bg_color="#182234", trough_color="#26344d")
-        b5_bar.pack(fill="x", pady=(0, 2))
+        b5_bar = RoundedProgressBar(card, height=6, bg_color="#131926", trough_color="#20293a")
+        b5_bar.pack(fill="x", pady=(2, 2))
         
-        b5_reset = tk.Label(card, text="Reset: --", font=("Segoe UI", 9), fg="#94a3b8", bg="#182234")
-        b5_reset.pack(anchor="w", pady=(0, 5))
-        
-        # Separator line
-        sep = tk.Frame(card, bg="#26344d", height=1)
-        sep.pack(fill="x", pady=(0, 5))
+        b5_reset = tk.Label(card, text="Reset: --", font=("Segoe UI", 8), fg="#64748b", bg="#131926")
+        b5_reset.pack(anchor="w", pady=(0, 4))
         
         # Weekly Bucket
-        bw_row = tk.Frame(card, bg="#182234")
-        bw_row.pack(fill="x", pady=(2, 2))
-        bw_title = tk.Label(bw_row, text="Wöchentliches Limit", font=("Segoe UI", 10, "bold"), fg="#cbd5e1", bg="#182234")
+        bw_row = tk.Frame(card, bg="#131926")
+        bw_row.pack(fill="x", pady=(3, 1))
+        bw_title = tk.Label(bw_row, text="Weekly", font=("Segoe UI", 10, "bold"), fg="#cbd5e1", bg="#131926")
         bw_title.pack(side="left")
-        bw_pct = tk.Label(bw_row, text="--%", font=("Segoe UI", 13, "bold"), fg="#f8fafc", bg="#182234")
+        bw_pct = tk.Label(bw_row, text="--%", font=("Segoe UI", 12, "bold"), fg="#10b981", bg="#131926")
         bw_pct.pack(side="right")
         
-        bw_bar = RoundedProgressBar(card, height=8, bg_color="#182234", trough_color="#26344d")
-        bw_bar.pack(fill="x", pady=(0, 2))
+        bw_bar = RoundedProgressBar(card, height=6, bg_color="#131926", trough_color="#20293a")
+        bw_bar.pack(fill="x", pady=(2, 2))
         
-        bw_reset = tk.Label(card, text="Reset: --", font=("Segoe UI", 9), fg="#94a3b8", bg="#182234")
-        bw_reset.pack(anchor="w")
+        bw_reset = tk.Label(card, text="Reset: --", font=("Segoe UI", 8), fg="#64748b", bg="#131926")
+        bw_reset.pack(anchor="w", pady=(0, 2))
         
         widgets = {
             "card": card,
@@ -851,7 +883,7 @@ class QuotaApp:
                 self.config["pos_y"] = self.root.winfo_y()
                 save_config(self.config)
 
-        for w in (self.header, self.title_box, self.title_lbl, self.sub_lbl):
+        for w in (self.header, self.title_box, self.title_lbl):
             w.bind("<Button-1>", start_move)
             w.bind("<B1-Motion>", do_move)
             w.bind("<ButtonRelease-1>", stop_move)
@@ -864,40 +896,38 @@ class QuotaApp:
         self.root.bind("<Escape>", lambda e: self.hide_window())
 
     def on_window_configure(self, event):
-        """Dynamically scales paddings and font sizes so nothing is ever cropped."""
+        """Dynamically scales font sizes and paddings down when small, capped at clean legible size."""
         if event.widget != self.root:
             return
         
         w = event.width
         h = event.height
-        compact = h < 440 or w < 350
         
-        if compact:
-            t_font = ("Segoe UI", 10, "bold")
-            s_font = ("Segoe UI", 8)
-            bt_font = ("Segoe UI", 9, "bold")
-            pct_font = ("Segoe UI", 11, "bold")
-            rst_font = ("Segoe UI", 8)
-            bar_h = 6
-        else:
-            t_font = ("Segoe UI", 12, "bold")
-            s_font = ("Segoe UI", 9)
-            bt_font = ("Segoe UI", 10, "bold")
-            pct_font = ("Segoe UI", 13, "bold")
-            rst_font = ("Segoe UI", 9)
-            bar_h = 8
-            
+        # Apply rounded region dynamically
+        apply_dwm_styling(self.root, w, h)
+        
+        # Proportional scale factor
+        scale = min(1.0, max(0.72, min(w / 380.0, h / 520.0)))
+        
+        # Font sizes with strict caps so they don't blow up or shrink illegibly
+        t_size = max(9, min(12, int(11 * scale)))
+        s_size = max(7, min(9, int(8 * scale)))
+        label_size = max(8, min(10, int(10 * scale)))
+        pct_size = max(10, min(13, int(12 * scale)))
+        rst_size = max(7, min(9, int(8 * scale)))
+        bar_h = max(4, min(8, int(6 * scale)))
+        
         for card_widgets in (self.gemini_widgets, self.claude_widgets):
             try:
-                card_widgets["title"].config(font=t_font)
-                card_widgets["sub"].config(font=s_font)
-                card_widgets["5h_title"].config(font=bt_font)
-                card_widgets["5h_pct"].config(font=pct_font)
-                card_widgets["5h_reset"].config(font=rst_font)
+                card_widgets["title"].config(font=("Segoe UI", t_size, "bold"))
+                card_widgets["sub"].config(font=("Segoe UI", s_size))
+                card_widgets["5h_title"].config(font=("Segoe UI", label_size, "bold"))
+                card_widgets["5h_pct"].config(font=("Segoe UI", pct_size, "bold"))
+                card_widgets["5h_reset"].config(font=("Segoe UI", rst_size))
                 card_widgets["5h_bar"].set_height(bar_h)
-                card_widgets["w_title"].config(font=bt_font)
-                card_widgets["w_pct"].config(font=pct_font)
-                card_widgets["w_reset"].config(font=rst_font)
+                card_widgets["w_title"].config(font=("Segoe UI", label_size, "bold"))
+                card_widgets["w_pct"].config(font=("Segoe UI", pct_size, "bold"))
+                card_widgets["w_reset"].config(font=("Segoe UI", rst_size))
                 card_widgets["w_bar"].set_height(bar_h)
             except Exception:
                 pass
@@ -969,10 +999,10 @@ class QuotaApp:
             elapsed = now_ts - self.last_successful_fetch
             if elapsed > 15:
                 self.live_badge.config(text="● OFFLINE", fg="#ef4444", bg="#450a0a")
-                self.status_lbl.config(text="Kein Signal (>15s)", fg="#ef4444")
+                self.status_lbl.config(text="No signal (>15s)", fg="#ef4444")
             else:
                 self.live_badge.config(text="● LIVE", fg="#10b981", bg="#064e3b")
-                self.status_lbl.config(text="Live synchronisiert", fg="#94a3b8")
+                self.status_lbl.config(text="Live synchronized", fg="#64748b")
         
         # 3. Live Auto-Refresh logic:
         # When window is open: silent background refresh every 10 seconds.
@@ -998,22 +1028,18 @@ class QuotaApp:
         save_config(self.config)
         self.pin_btn.config(
             text="📌" if self.pinned else "📍",
-            fg="#38bdf8" if self.pinned else "#94a3b8"
+            fg="#38bdf8" if self.pinned else "#64748b"
         )
-        if self.pinned:
-            self.sub_lbl.config(text="Angepinnt • Bleibt als Floating-Widget offen")
-        else:
-            self.sub_lbl.config(text="Floating Window • An Rändern skalierbar")
 
     def reset_to_tray(self):
         """Docks the window back above the system tray and restores standard size."""
         self.config["custom_pos"] = False
         self.config["pos_x"] = None
         self.config["pos_y"] = None
-        self.win_width = 390
-        self.win_height = 510
-        self.config["win_width"] = 390
-        self.config["win_height"] = 510
+        self.win_width = 380
+        self.win_height = 520
+        self.config["win_width"] = 380
+        self.config["win_height"] = 520
         save_config(self.config)
         self.position_window()
 
@@ -1028,10 +1054,11 @@ class QuotaApp:
             x = right - self.win_width - 12
             y = bottom - self.win_height - 10
         self.root.geometry(f"{self.win_width}x{self.win_height}+{x}+{y}")
+        apply_dwm_styling(self.root, self.win_width, self.win_height)
 
     def show_window(self):
         self.position_window()
-        apply_dwm_styling(self.root)
+        apply_dwm_styling(self.root, self.win_width, self.win_height)
         self.root.deiconify()
         self.root.lift()
         self.root.focus_force()
@@ -1072,7 +1099,7 @@ class QuotaApp:
         
         # Only change refresh button text if user clicked manually
         if not silent:
-            self.refresh_btn.config(text="⌛ Lade...", fg="#94a3b8")
+            self.refresh_btn.config(text="⌛ Loading...", fg="#94a3b8")
             
         threading.Thread(target=self._fetch_worker, daemon=True).start()
 
@@ -1082,18 +1109,18 @@ class QuotaApp:
 
     def _on_fetch_complete(self, data, err):
         self.is_fetching = False
-        self.refresh_btn.config(text="🔄 Aktualisieren", fg="#f8fafc")
+        self.refresh_btn.config(text="🔄 Refresh", fg="#f8fafc")
         
         if err or not data:
             if time.time() - self.last_successful_fetch > 15:
-                self.status_lbl.config(text="Kein Signal • Timeout", fg="#ef4444")
+                self.status_lbl.config(text="No signal • Timeout", fg="#ef4444")
                 self.live_badge.config(text="● OFFLINE", fg="#ef4444", bg="#450a0a")
             print(f"Fetch error: {err}")
             return
         
         self.latest_data = data
         self.last_successful_fetch = time.time()
-        self.status_lbl.config(text="Live synchronisiert", fg="#94a3b8")
+        self.status_lbl.config(text="Live synchronized", fg="#64748b")
         self.live_badge.config(text="● LIVE", fg="#10b981", bg="#064e3b")
         
         self.update_ui_cards(data)
@@ -1130,7 +1157,7 @@ class QuotaApp:
                     except Exception:
                         pass
                 
-                pct_str = f"{frac * 100:.1f}%"
+                pct_str = f"{int(round(frac * 100))}%"
                 color = get_color_for_fraction(frac)
                 
                 if "5h" in b_id:
@@ -1170,13 +1197,13 @@ class QuotaApp:
     # Tray Menu (Right-Click Menu, while Left-Click opens/closes flyout)
     def create_tray_menu(self):
         menu_items = [
-            item("📊 Dashboard öffnen", lambda *a: self.post(self.toggle_window), default=True),
-            item("🔄 Jetzt live aktualisieren", lambda *a: self.post(lambda: self.trigger_refresh(silent=False))),
-            item("📍 An Taskleiste andocken (Reset)", lambda *a: self.post(self.reset_to_tray)),
+            item("Open Dashboard", lambda *a: self.post(self.toggle_window), default=True),
+            item("Refresh Now", lambda *a: self.post(lambda: self.trigger_refresh(silent=False))),
+            item("Dock to Tray (Reset Position)", lambda *a: self.post(self.reset_to_tray)),
             Menu.SEPARATOR,
-            item("🚀 Autostart mit Windows", self.toggle_autostart, checked=lambda item: is_autostart_enabled()),
+            item("Start with Windows", self.toggle_autostart, checked=lambda item: is_autostart_enabled()),
             Menu.SEPARATOR,
-            item("❌ Beenden", lambda *a: self.post(self.quit_app))
+            item("Exit", lambda *a: self.post(self.quit_app))
         ]
         return Menu(*menu_items)
 
@@ -1239,18 +1266,18 @@ def main():
         ok = check_single_instance()
         if not ok:
             with open(os.path.join(APP_DIR, "agy_tray.log"), "a", encoding="utf-8") as f:
-                f.write(f"[{datetime.now().isoformat()}] Bereits eine Instanz aktiv.\n")
+                f.write(f"[{datetime.now().isoformat()}] Another instance is already active.\n")
             sys.exit(0)
         
         with open(os.path.join(APP_DIR, "agy_tray.log"), "a", encoding="utf-8") as f:
-            f.write(f"[{datetime.now().isoformat()}] App wird gestartet...\n")
+            f.write(f"[{datetime.now().isoformat()}] Starting application...\n")
             
         app = QuotaApp()
         app.run()
     except Exception as e:
         import traceback
         with open(os.path.join(APP_DIR, "agy_tray.log"), "a", encoding="utf-8") as f:
-            f.write(f"[{datetime.now().isoformat()}] Fehler:\n{traceback.format_exc()}\n")
+            f.write(f"[{datetime.now().isoformat()}] Error:\n{traceback.format_exc()}\n")
 
 if __name__ == "__main__":
     main()

@@ -7,8 +7,8 @@ $s = $ws.CreateShortcut($shortcutPath)
 $s.TargetPath = "wscript.exe"
 $s.Arguments = "`"$scriptDir\start_silent.vbs`""
 $s.WorkingDirectory = $scriptDir
-$s.Description = "Live API Usage & Quota Tray Icon für Antigravity"
+$s.Description = "Live API Usage & Quota Tray Monitor for Antigravity"
 $s.IconLocation = "$scriptDir\icon.ico"
 $s.Save()
 
-Write-Host "Desktop-Verknüpfung wurde erfolgreich erstellt: $shortcutPath"
+Write-Host "Desktop shortcut created successfully: $shortcutPath"
