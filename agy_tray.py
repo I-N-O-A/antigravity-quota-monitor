@@ -427,9 +427,10 @@ class GlassWindow(QWidget):
         self.app_manager = app_manager
         self.config = load_config()
         self.is_pinned = self.config.get("pinned", False)
-        self._just_shown = False
+        self._has_been_active = False
 
-        self.setWindowFlags(Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.SubWindow)
+        self.setWindowFlags(Qt.Window | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint)
+        self.setWindowTitle("Antigravity Quota Monitor")
         self.setAttribute(Qt.WA_TranslucentBackground)
 
         w = max(280, self.config.get("win_width", 360))
@@ -656,11 +657,7 @@ class GlassWindow(QWidget):
     def showEvent(self, event):
         super().showEvent(event)
         apply_acrylic_blur(int(self.winId()))
-        self._just_shown = True
-        QTimer.singleShot(250, self._clear_just_shown)
-
-    def _clear_just_shown(self):
-        self._just_shown = False
+        self._has_been_active = False
 
     def paintEvent(self, event):
         painter = QPainter(self)
@@ -722,7 +719,9 @@ class GlassWindow(QWidget):
         super().changeEvent(event)
         # If user clicked outside and window lost activation, close automatically unless pinned
         if event.type() == event.ActivationChange:
-            if not self._just_shown and not self.isActiveWindow() and not self.is_pinned:
+            if self.isActiveWindow():
+                self._has_been_active = True
+            elif self._has_been_active and not self.is_pinned:
                 self.hide()
 
     def keyPressEvent(self, event):
@@ -919,6 +918,11 @@ class AppManager(QObject):
         self.window.show()
         self.window.raise_()
         self.window.activateWindow()
+        try:
+            hwnd = int(self.window.winId())
+            ctypes.windll.user32.SetForegroundWindow(hwnd)
+        except Exception:
+            pass
         apply_acrylic_blur(int(self.window.winId()))
         # Fast live refresh when window opens
         self.trigger_refresh()
