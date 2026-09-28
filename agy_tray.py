@@ -25,16 +25,18 @@ if sys.stderr is None:
 
 import json
 import time
+import math
 import shutil
 import ctypes
 from ctypes import wintypes
 import threading
+import webbrowser
 import winreg
 from datetime import datetime, timezone
 import subprocess
 
-from PyQt5.QtCore import Qt, QTimer, QPoint, QRectF, pyqtSignal, QObject, QEvent
-from PyQt5.QtGui import QPainter, QColor, QPainterPath, QPen, QFont, QIcon, QPixmap
+from PyQt5.QtCore import Qt, QTimer, QPoint, QPointF, QRectF, QSize, pyqtSignal, QObject, QEvent
+from PyQt5.QtGui import QPainter, QColor, QPainterPath, QPen, QFont, QIcon, QPixmap, QLinearGradient
 from PyQt5.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QPushButton, QProgressBar, QFrame, QScrollArea, QSystemTrayIcon,
@@ -69,10 +71,9 @@ class WINDOWCOMPOSITIONATTRIBDATA(ctypes.Structure):
         ("SizeOfData", ctypes.c_size_t),
     ]
 
-def apply_acrylic_blur(hwnd, color=0x90101524):
+def apply_acrylic_glass(hwnd):
     """
-    Apply native Windows 11 Acrylic blur behind window.
-    GradientColor is 0xAABBGGRR.
+    Apply native Windows 11 Acrylic blur behind window with true glass transparency.
     """
     try:
         user32 = ctypes.windll.user32
@@ -86,14 +87,15 @@ def apply_acrylic_blur(hwnd, color=0x90101524):
         val_border = ctypes.c_uint32(0xFFFFFFFE)
         dwmapi.DwmSetWindowAttribute(hwnd, 34, ctypes.byref(val_border), 4)
 
-        # Do not round DWM bounding rect (DWMWCP_DONOTROUND = 1) so Qt's smooth 26px radius shines without extra outlines
+        # Do not round DWM bounding rect so Qt's smooth 26px radius shines
         val_corner = ctypes.c_int(1)
         dwmapi.DwmSetWindowAttribute(hwnd, 33, ctypes.byref(val_corner), 4)
 
         accent = ACCENT_POLICY()
         accent.AccentState = 4  # ACCENT_ENABLE_ACRYLICBLURBEHIND
         accent.AccentFlags = 2
-        accent.GradientColor = color
+        # Transparent acrylic blur with very light dark tint (0x22 alpha)
+        accent.GradientColor = 0x22101622
         accent.AnimationId = 0
 
         data = WINDOWCOMPOSITIONATTRIBDATA()
@@ -118,8 +120,8 @@ DEFAULT_CONFIG = {
     "background_refresh_seconds": 60,
     "live_refresh_seconds": 10,
     "pinned": False,
-    "win_width": 360,
-    "win_height": 480,
+    "win_width": 370,
+    "win_height": 490,
     "pos_x": None,
     "pos_y": None
 }
@@ -129,7 +131,6 @@ def load_config():
         try:
             with open(CONFIG_PATH, "r", encoding="utf-8") as f:
                 cfg = json.load(f)
-                # Filter out obsolete keys
                 clean_cfg = {k: v for k, v in cfg.items() if k in DEFAULT_CONFIG}
                 return {**DEFAULT_CONFIG, **clean_cfg}
         except Exception:
@@ -247,73 +248,172 @@ def format_ref_countdown(reset_time_str):
     except Exception:
         return reset_time_str
 
-def create_refresh_icon(color=QColor(203, 213, 225), size=18):
+# ----------------- TOP-TIER VECTOR ICONS -----------------
+
+def create_pin_icon(pinned=False, color=QColor(226, 232, 240), size=24):
+    """Vector pushpin icon matching reference screenshot."""
     pix = QPixmap(size, size)
     pix.fill(Qt.transparent)
     p = QPainter(pix)
     p.setRenderHint(QPainter.Antialiasing)
-    pen = QPen(color, 1.8)
+
+    pen = QPen(color, 1.7)
     pen.setCapStyle(Qt.RoundCap)
     pen.setJoinStyle(Qt.RoundJoin)
     p.setPen(pen)
-    p.drawArc(QRectF(3.0, 3.0, 12.0, 12.0), 35 * 16, 280 * 16)
-    path = QPainterPath()
-    path.moveTo(9.5, 1.5)
-    path.lineTo(13.5, 3.5)
-    path.lineTo(12.5, 7.5)
-    p.drawPath(path)
+
+    p.save()
+    p.translate(size / 2.0, size / 2.0)
+    p.rotate(-45)
+
+    # Pin head
+    p.drawLine(QPointF(-4.5, -6.0), QPointF(4.5, -6.0))
+    # Tapered body
+    p.drawLine(QPointF(-3.0, -6.0), QPointF(-2.0, -1.0))
+    p.drawLine(QPointF(3.0, -6.0), QPointF(2.0, -1.0))
+    # Collar
+    p.drawLine(QPointF(-5.0, -1.0), QPointF(5.0, -1.0))
+    # Needle
+    p.drawLine(QPointF(0.0, -1.0), QPointF(0.0, 6.5))
+    p.restore()
+
+    if not pinned:
+        # Diagonal slash line matching reference screenshot (white/silver)
+        pen_slash = QPen(color, 1.7)
+        pen_slash.setCapStyle(Qt.RoundCap)
+        p.setPen(pen_slash)
+        p.drawLine(QPointF(4.5, 4.5), QPointF(size - 4.5, size - 4.5))
+
     p.end()
     return QIcon(pix)
 
-class SlashedPinIcon(QWidget):
-    def __init__(self, pinned=False, parent=None):
-        super().__init__(parent)
-        self.pinned = pinned
-        self.setFixedSize(18, 18)
-        self.setAttribute(Qt.WA_TransparentForMouseEvents)
+def create_close_icon(color=QColor(226, 232, 240), size=24):
+    """Vector X icon matching reference screenshot."""
+    pix = QPixmap(size, size)
+    pix.fill(Qt.transparent)
+    p = QPainter(pix)
+    p.setRenderHint(QPainter.Antialiasing)
 
-    def set_pinned(self, pinned):
-        self.pinned = pinned
-        self.update()
+    pen = QPen(color, 1.8)
+    pen.setCapStyle(Qt.RoundCap)
+    p.setPen(pen)
 
-    def paintEvent(self, event):
-        p = QPainter(self)
-        p.setRenderHint(QPainter.Antialiasing)
-        pen = QPen(QColor(255, 255, 255, 220), 1.6)
-        pen.setCapStyle(Qt.RoundCap)
-        pen.setJoinStyle(Qt.RoundJoin)
-        p.setPen(pen)
+    m = 7.0
+    p.drawLine(QPointF(m, m), QPointF(size - m, size - m))
+    p.drawLine(QPointF(size - m, m), QPointF(m, size - m))
+    p.end()
+    return QIcon(pix)
 
-        # Pin shape
-        p.drawLine(9, 3, 9, 10)
-        p.drawLine(5, 7, 13, 7)
-        p.drawLine(9, 10, 9, 15)
+def create_refresh_icon(color=QColor(226, 232, 240), size=24):
+    """Dual-arrow circular refresh icon matching Lucide rotate-cw."""
+    pix = QPixmap(size, size)
+    pix.fill(Qt.transparent)
+    p = QPainter(pix)
+    p.setRenderHint(QPainter.Antialiasing)
 
-        if not self.pinned:
-            pen_slash = QPen(QColor(248, 113, 113, 220), 1.6)
-            pen_slash.setCapStyle(Qt.RoundCap)
-            p.setPen(pen_slash)
-            p.drawLine(4, 14, 14, 4)
+    pen = QPen(color, 1.7)
+    pen.setCapStyle(Qt.RoundCap)
+    pen.setJoinStyle(Qt.RoundJoin)
+    p.setPen(pen)
 
-# Modern Acrylic Quota Card
-class ModernQuotaCard(QFrame):
+    cx, cy = size / 2.0, size / 2.0
+    r = 6.2
+
+    rect = QRectF(cx - r, cy - r, r * 2.0, r * 2.0)
+    p.drawArc(rect, 25 * 16, 130 * 16)
+
+    rad1 = math.radians(25)
+    x1 = cx + r * math.cos(rad1)
+    y1 = cy - r * math.sin(rad1)
+    p.drawLine(QPointF(x1, y1), QPointF(x1 + 3.0, y1 + 0.5))
+    p.drawLine(QPointF(x1, y1), QPointF(x1 + 0.5, y1 - 3.0))
+
+    p.drawArc(rect, 205 * 16, 130 * 16)
+
+    rad2 = math.radians(205)
+    x2 = cx + r * math.cos(rad2)
+    y2 = cy - r * math.sin(rad2)
+    p.drawLine(QPointF(x2, y2), QPointF(x2 - 3.0, y2 - 0.5))
+    p.drawLine(QPointF(x2, y2), QPointF(x2 - 0.5, y2 + 3.0))
+
+    p.end()
+    return QIcon(pix)
+
+def create_external_icon(color=QColor(226, 232, 240), size=24):
+    """External link icon matching reference screenshot."""
+    pix = QPixmap(size, size)
+    pix.fill(Qt.transparent)
+    p = QPainter(pix)
+    p.setRenderHint(QPainter.Antialiasing)
+
+    pen = QPen(color, 1.7)
+    pen.setCapStyle(Qt.RoundCap)
+    pen.setJoinStyle(Qt.RoundJoin)
+    p.setPen(pen)
+
+    # Box with top-right opening
+    path = QPainterPath()
+    path.moveTo(QPointF(13.0, 7.0))
+    path.lineTo(QPointF(7.0, 7.0))
+    path.lineTo(QPointF(7.0, 17.0))
+    path.lineTo(QPointF(17.0, 17.0))
+    path.lineTo(QPointF(17.0, 11.0))
+    p.drawPath(path)
+
+    # Arrow pointing up-right
+    p.drawLine(QPointF(11.0, 13.0), QPointF(17.0, 7.0))
+    p.drawLine(QPointF(13.0, 7.0), QPointF(17.0, 7.0))
+    p.drawLine(QPointF(17.0, 7.0), QPointF(17.0, 11.0))
+
+    p.end()
+    return QIcon(pix)
+
+def create_antigravity_logo(size=28):
+    """Sleek minimalist Antigravity logo glyph."""
+    pix = QPixmap(size, size)
+    pix.fill(Qt.transparent)
+    p = QPainter(pix)
+    p.setRenderHint(QPainter.Antialiasing)
+
+    cx, cy = size / 2.0, size / 2.0
+
+    # Geometric floating orbital triangle / glyph
+    pen = QPen(QColor(255, 255, 255, 230), 1.8)
+    pen.setCapStyle(Qt.RoundCap)
+    pen.setJoinStyle(Qt.RoundJoin)
+    p.setPen(pen)
+
+    path = QPainterPath()
+    path.moveTo(cx, cy + 8.0)
+    path.lineTo(cx - 7.5, cy - 5.0)
+    path.lineTo(cx + 7.5, cy - 5.0)
+    path.closeSubpath()
+    p.drawPath(path)
+
+    # Inner glowing core
+    p.setPen(Qt.NoPen)
+    p.setBrush(QColor(56, 189, 248, 230))
+    p.drawEllipse(QPointF(cx, cy - 0.5), 2.5, 2.5)
+
+    p.end()
+    return pix
+
+# ----------------- GLASS QUOTA CARD -----------------
+
+class GlassQuotaCard(QFrame):
     def __init__(self, group_name, badge_text, badge_color="#38bdf8", parent=None):
         super().__init__(parent)
-        self.group_name = group_name
-        self.badge_text = badge_text
-        self.badge_color = badge_color
-        self.setObjectName("quotaCard")
+        self.setObjectName("glassCard")
         self.setStyleSheet("""
-            #quotaCard {
-                background: rgba(0, 0, 0, 0.40);
+            #glassCard {
+                background: rgba(0, 0, 0, 0.18);
                 border: 1px solid rgba(255, 255, 255, 0.08);
                 border-radius: 16px;
             }
         """)
-
         self.layout = QVBoxLayout(self)
-        self.layout.setContentsMargins(16, 11, 16, 13)
-        self.layout.setSpacing(7)
+        self.layout.setContentsMargins(16, 13, 16, 14)
+        self.layout.setSpacing(8)
 
         # Header Row: [Title]   [Badge]
         self.hdr = QHBoxLayout()
@@ -329,14 +429,13 @@ class ModernQuotaCard(QFrame):
         self.badge = QLabel(badge_text)
         self.badge.setFont(QFont("Segoe UI", 8, QFont.Bold))
         self.badge.setStyleSheet(f"""
-            background: rgba(255, 255, 255, 0.08);
+            background: rgba(255, 255, 255, 0.06);
             color: {badge_color};
-            border: 1px solid rgba(255, 255, 255, 0.12);
+            border: 1px solid rgba(255, 255, 255, 0.10);
             padding: 2px 8px;
-            border-radius: 10px;
+            border-radius: 9px;
         """)
         self.hdr.addWidget(self.badge)
-
         self.layout.addLayout(self.hdr)
 
         # 5h Metric Section
@@ -353,7 +452,7 @@ class ModernQuotaCard(QFrame):
         self.layout.addLayout(self.r_5h)
 
         self.bar_5h = QProgressBar()
-        self.bar_5h.setFixedHeight(5)
+        self.bar_5h.setFixedHeight(4)
         self.bar_5h.setTextVisible(False)
         self.bar_5h.setValue(100)
         self.set_bar_color(self.bar_5h, "#34d399")
@@ -361,10 +460,10 @@ class ModernQuotaCard(QFrame):
 
         self.time_5h = QLabel("Loading...")
         self.time_5h.setFont(QFont("Segoe UI", 8))
-        self.time_5h.setStyleSheet("color: #94a3b8;")
+        self.time_5h.setStyleSheet("color: rgba(255, 255, 255, 0.50);")
         self.layout.addWidget(self.time_5h)
 
-        self.layout.addSpacing(3)
+        self.layout.addSpacing(4)
 
         # Weekly Metric Section
         self.r_wk = QHBoxLayout()
@@ -380,7 +479,7 @@ class ModernQuotaCard(QFrame):
         self.layout.addLayout(self.r_wk)
 
         self.bar_wk = QProgressBar()
-        self.bar_wk.setFixedHeight(5)
+        self.bar_wk.setFixedHeight(4)
         self.bar_wk.setTextVisible(False)
         self.bar_wk.setValue(100)
         self.set_bar_color(self.bar_wk, "#34d399")
@@ -388,7 +487,7 @@ class ModernQuotaCard(QFrame):
 
         self.time_wk = QLabel("Loading...")
         self.time_wk.setFont(QFont("Segoe UI", 8))
-        self.time_wk.setStyleSheet("color: #94a3b8;")
+        self.time_wk.setStyleSheet("color: rgba(255, 255, 255, 0.50);")
         self.layout.addWidget(self.time_wk)
 
         self.bucket_5h_reset = None
@@ -397,7 +496,7 @@ class ModernQuotaCard(QFrame):
     def set_bar_color(self, bar, hex_color):
         bar.setStyleSheet(f"""
             QProgressBar {{
-                background: rgba(255, 255, 255, 0.12);
+                background: rgba(255, 255, 255, 0.10);
                 border-radius: 2px;
                 border: none;
             }}
@@ -438,8 +537,8 @@ class ModernQuotaCard(QFrame):
 
     def update_scaling(self, scale):
         pad_h = int(16 * scale)
-        pad_v = int(11 * scale)
-        spacing = int(7 * scale)
+        pad_v = int(12 * scale)
+        spacing = int(8 * scale)
         self.layout.setContentsMargins(pad_h, pad_v, pad_h, pad_v)
         self.layout.setSpacing(spacing)
 
@@ -457,11 +556,12 @@ class ModernQuotaCard(QFrame):
         self.time_5h.setFont(QFont("Segoe UI", time_pt))
         self.time_wk.setFont(QFont("Segoe UI", time_pt))
 
-        bar_h = max(4, int(5 * scale))
+        bar_h = max(3, int(4 * scale))
         self.bar_5h.setFixedHeight(bar_h)
         self.bar_wk.setFixedHeight(bar_h)
 
-# Main Glass Floating Window
+# ----------------- MAIN GLASS FLOATING WINDOW -----------------
+
 class GlassWindow(QWidget):
     BORDER_WIDTH = 9
     data_received = pyqtSignal(dict)
@@ -477,8 +577,8 @@ class GlassWindow(QWidget):
         self.setWindowTitle("Antigravity Quota Monitor")
         self.setAttribute(Qt.WA_TranslucentBackground)
 
-        w = max(280, self.config.get("win_width", 360))
-        h = max(320, self.config.get("win_height", 480))
+        w = max(280, self.config.get("win_width", 370))
+        h = max(320, self.config.get("win_height", 490))
         self.resize(w, h)
         self.setMinimumSize(280, 320)
 
@@ -508,82 +608,62 @@ class GlassWindow(QWidget):
 
     def init_ui(self):
         self.main_layout = QVBoxLayout(self)
-        self.main_layout.setContentsMargins(18, 16, 18, 16)
-        self.main_layout.setSpacing(10)
+        self.main_layout.setContentsMargins(20, 18, 20, 18)
+        self.main_layout.setSpacing(12)
 
-        # 1. Header Bar: [AG] Antigravity Quota   [● LIVE]       [Pin] [Close]
+        # 1. Header Bar: [Logo]      Antigravity Quota      [Pin] [Close]
         self.hdr = QHBoxLayout()
         self.hdr.setSpacing(8)
 
-        # AG Badge
-        self.ag_badge = QLabel("AG")
-        self.ag_badge.setFont(QFont("Segoe UI", 9, QFont.Bold))
-        self.ag_badge.setStyleSheet("""
-            background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #3b82f6, stop:1 #1d4ed8);
-            color: #ffffff;
-            padding: 3px 8px;
-            border-radius: 8px;
-            border: 1px solid rgba(255, 255, 255, 0.25);
-        """)
-        self.hdr.addWidget(self.ag_badge)
-
-        self.title_lbl = QLabel("Antigravity Quota")
-        self.title_lbl.setFont(QFont("Segoe UI", 12, QFont.Bold))
-        self.title_lbl.setStyleSheet("color: #ffffff; letter-spacing: 0.2px;")
-        self.hdr.addWidget(self.title_lbl)
-
-        self.live_pill = QLabel("● LIVE")
-        self.live_pill.setFont(QFont("Segoe UI", 8, QFont.Bold))
-        self.live_pill.setStyleSheet("""
-            background: rgba(16, 185, 129, 0.18);
-            color: #34d399;
-            border: 1px solid rgba(52, 211, 153, 0.35);
-            padding: 2px 7px;
-            border-radius: 8px;
-        """)
-        self.hdr.addWidget(self.live_pill)
+        # Vector Antigravity Logo
+        self.logo_lbl = QLabel()
+        self.logo_lbl.setPixmap(create_antigravity_logo(size=28))
+        self.hdr.addWidget(self.logo_lbl)
 
         self.hdr.addStretch()
 
-        # Pin button
+        self.title_lbl = QLabel("Antigravity Quota")
+        self.title_lbl.setFont(QFont("Segoe UI", 13, QFont.Bold))
+        self.title_lbl.setStyleSheet("color: #ffffff; letter-spacing: 0.3px;")
+        self.hdr.addWidget(self.title_lbl)
+
+        self.hdr.addStretch()
+
+        # Pin button with clean vector icon
         self.btn_pin = QPushButton()
-        self.btn_pin.setFixedSize(28, 28)
+        self.btn_pin.setFixedSize(30, 30)
         self.btn_pin.setToolTip("Pin window (keep visible)")
         self.btn_pin.setCursor(Qt.PointingHandCursor)
+        self.btn_pin.setIcon(create_pin_icon(pinned=self.is_pinned))
+        self.btn_pin.setIconSize(QSize(22, 22))
         self.btn_pin.setStyleSheet("""
             QPushButton {
-                background: rgba(255, 255, 255, 0.08);
+                background: rgba(255, 255, 255, 0.07);
                 border: 1px solid rgba(255, 255, 255, 0.12);
-                border-radius: 14px;
+                border-radius: 15px;
             }
             QPushButton:hover {
-                background: rgba(255, 255, 255, 0.18);
+                background: rgba(255, 255, 255, 0.15);
             }
         """)
-        pin_l = QHBoxLayout(self.btn_pin)
-        pin_l.setContentsMargins(0, 0, 0, 0)
-        self.pin_icon = SlashedPinIcon(self.is_pinned, self.btn_pin)
-        pin_l.addWidget(self.pin_icon, 0, Qt.AlignCenter)
         self.btn_pin.clicked.connect(self.toggle_pin)
         self.hdr.addWidget(self.btn_pin)
 
-        # Close button
-        self.btn_close = QPushButton("✕")
-        self.btn_close.setFixedSize(28, 28)
+        # Close button with clean vector icon
+        self.btn_close = QPushButton()
+        self.btn_close.setFixedSize(30, 30)
         self.btn_close.setToolTip("Close to system tray")
-        self.btn_close.setFont(QFont("Segoe UI", 10, QFont.Bold))
         self.btn_close.setCursor(Qt.PointingHandCursor)
+        self.btn_close.setIcon(create_close_icon())
+        self.btn_close.setIconSize(QSize(20, 20))
         self.btn_close.setStyleSheet("""
             QPushButton {
-                background: rgba(255, 255, 255, 0.08);
-                color: #cbd5e1;
+                background: rgba(255, 255, 255, 0.07);
                 border: 1px solid rgba(255, 255, 255, 0.12);
-                border-radius: 14px;
-                padding-bottom: 2px;
+                border-radius: 15px;
             }
             QPushButton:hover {
                 background: rgba(239, 68, 68, 0.35);
-                color: #ffffff;
                 border-color: rgba(239, 68, 68, 0.50);
             }
         """)
@@ -610,12 +690,12 @@ class GlassWindow(QWidget):
                 margin: 0px;
             }
             QScrollBar::handle:vertical {
-                background: rgba(255, 255, 255, 0.20);
+                background: rgba(255, 255, 255, 0.18);
                 border-radius: 2px;
                 min-height: 20px;
             }
             QScrollBar::handle:vertical:hover {
-                background: rgba(255, 255, 255, 0.35);
+                background: rgba(255, 255, 255, 0.30);
             }
             QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
                 height: 0px;
@@ -632,51 +712,80 @@ class GlassWindow(QWidget):
         c_layout.setSpacing(10)
 
         # Gemini Card
-        self.card_gemini = ModernQuotaCard("Gemini Models", "FLASH & PRO", "#38bdf8", container)
+        self.card_gemini = GlassQuotaCard("Gemini Models", "FLASH & PRO", "#38bdf8", container)
         c_layout.addWidget(self.card_gemini)
 
         # Claude & GPT Card
-        self.card_claude = ModernQuotaCard("Claude & GPT", "OPUS & SONNET", "#fb923c", container)
+        self.card_claude = GlassQuotaCard("Claude & GPT", "OPUS & SONNET", "#fb923c", container)
         c_layout.addWidget(self.card_claude)
 
         c_layout.addStretch()
         self.scroll.setWidget(container)
         self.main_layout.addWidget(self.scroll)
 
-        # 3. Footer Bar: [Status]  [Refresh Btn]
+        # 3. Footer Bar: [● Live synchronized]      [Refresh] [External]
         self.footer = QHBoxLayout()
         self.footer.setContentsMargins(4, 0, 4, 0)
 
+        self.live_dot = QLabel("●")
+        self.live_dot.setStyleSheet("color: #34d399; font-size: 11px;")
+        self.footer.addWidget(self.live_dot)
+
         self.lbl_status = QLabel("Live synchronized")
         self.lbl_status.setFont(QFont("Segoe UI", 9))
-        self.lbl_status.setStyleSheet("color: #64748b;")
+        self.lbl_status.setStyleSheet("color: rgba(255, 255, 255, 0.45);")
         self.footer.addWidget(self.lbl_status)
 
         self.footer.addStretch()
 
+        # Refresh button with clean vector icon
         self.btn_refresh = QPushButton()
-        self.btn_refresh.setFixedSize(28, 28)
+        self.btn_refresh.setFixedSize(30, 30)
         self.btn_refresh.setToolTip("Refresh quotas now")
         self.btn_refresh.setCursor(Qt.PointingHandCursor)
         self.btn_refresh.setIcon(create_refresh_icon())
+        self.btn_refresh.setIconSize(QSize(20, 20))
         self.btn_refresh.setStyleSheet("""
             QPushButton {
-                background: rgba(255, 255, 255, 0.08);
+                background: rgba(255, 255, 255, 0.07);
                 border: 1px solid rgba(255, 255, 255, 0.12);
-                border-radius: 14px;
+                border-radius: 15px;
             }
             QPushButton:hover {
-                background: rgba(255, 255, 255, 0.18);
+                background: rgba(255, 255, 255, 0.15);
             }
         """)
         self.btn_refresh.clicked.connect(self.app_manager.trigger_refresh)
         self.footer.addWidget(self.btn_refresh)
 
+        # External button with clean vector icon
+        self.btn_ext = QPushButton()
+        self.btn_ext.setFixedSize(30, 30)
+        self.btn_ext.setToolTip("Open GitHub Repository")
+        self.btn_ext.setCursor(Qt.PointingHandCursor)
+        self.btn_ext.setIcon(create_external_icon())
+        self.btn_ext.setIconSize(QSize(20, 20))
+        self.btn_ext.setStyleSheet("""
+            QPushButton {
+                background: rgba(255, 255, 255, 0.07);
+                border: 1px solid rgba(255, 255, 255, 0.12);
+                border-radius: 15px;
+            }
+            QPushButton:hover {
+                background: rgba(255, 255, 255, 0.15);
+            }
+        """)
+        self.btn_ext.clicked.connect(self.open_repo)
+        self.footer.addWidget(self.btn_ext)
+
         self.main_layout.addLayout(self.footer)
+
+    def open_repo(self):
+        webbrowser.open("https://github.com/I-N-O-A/antigravity-quota-monitor")
 
     def toggle_pin(self):
         self.is_pinned = not self.is_pinned
-        self.pin_icon.set_pinned(self.is_pinned)
+        self.btn_pin.setIcon(create_pin_icon(pinned=self.is_pinned))
         self.config["pinned"] = self.is_pinned
         save_config(self.config)
 
@@ -694,13 +803,19 @@ class GlassWindow(QWidget):
 
         rect = QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5)
         path = QPainterPath()
-        path.addRoundedRect(rect, 26, 26)
+        path.addRoundedRect(rect, 26.0, 26.0)
 
-        # Acrylic dark translucent background fill
-        painter.fillPath(path, QColor(14, 20, 32, 175))
+        # 1. True glass dark tint: alpha 30 (reveals the desktop wallpaper through the glass)
+        painter.fillPath(path, QColor(14, 20, 32, 30))
 
-        # Thin highlight border
-        pen = QPen(QColor(255, 255, 255, 34), 1.0)
+        # 2. Specular glass reflection gradient at top edge
+        grad = QLinearGradient(0, 0, 0, 110)
+        grad.setColorAt(0.0, QColor(255, 255, 255, 20))
+        grad.setColorAt(1.0, QColor(255, 255, 255, 0))
+        painter.fillPath(path, grad)
+
+        # 3. Delicate glass border highlight
+        pen = QPen(QColor(255, 255, 255, 36), 1.0)
         painter.setPen(pen)
         painter.drawPath(path)
 
@@ -738,7 +853,7 @@ class GlassWindow(QWidget):
                 return True, 15  # HTBOTTOM
 
             # Top header bar (Drag to move, except buttons)
-            if p.y() <= 48 and p.x() < (w - 75):
+            if p.y() <= 50 and p.x() < (w - 80):
                 return True, 2   # HTCAPTION
 
         return super().nativeEvent(eventType, message)
@@ -752,17 +867,17 @@ class GlassWindow(QWidget):
         save_config(self.config)
 
         # Responsive scaling
-        w_factor = w / 360.0
-        h_factor = h / 480.0
+        w_factor = w / 370.0
+        h_factor = h / 490.0
         factor = min(w_factor, h_factor)
         scale = max(0.80, min(1.0, factor))
 
-        margin = max(12, int(18 * scale))
-        spacing = max(8, int(10 * scale))
+        margin = max(14, int(20 * scale))
+        spacing = max(8, int(12 * scale))
         self.main_layout.setContentsMargins(margin, margin, margin, margin)
         self.main_layout.setSpacing(spacing)
 
-        title_pt = max(10, int(12 * scale))
+        title_pt = max(10, int(13 * scale))
         self.title_lbl.setFont(QFont("Segoe UI", title_pt, QFont.Bold))
 
         self.card_gemini.update_scaling(scale)
@@ -805,7 +920,8 @@ class GlassWindow(QWidget):
 
         self.app_manager.update_tray_icon(min_frac)
 
-# Main Application Controller
+# ----------------- APPLICATION CONTROLLER -----------------
+
 class AppManager(QObject):
     def __init__(self, app):
         super().__init__()
@@ -882,7 +998,7 @@ class AppManager(QObject):
         self.tray.setContextMenu(self.menu)
         self.tray.show()
 
-        # Create Window
+        # Create Glass Window
         self.window = GlassWindow(self)
 
         # Background Fetch Timer
@@ -918,7 +1034,7 @@ class AppManager(QObject):
             ctypes.windll.user32.SetForegroundWindow(hwnd)
         except Exception:
             pass
-        apply_acrylic_blur(int(self.window.winId()))
+        apply_acrylic_glass(int(self.window.winId()))
         self.trigger_refresh()
 
     def toggle_autostart(self):
@@ -955,7 +1071,8 @@ class AppManager(QObject):
         self.tray.hide()
         self.app.quit()
 
-# Single Instance Check
+# ----------------- SINGLE INSTANCE -----------------
+
 def check_single_instance():
     global _mutex_handle, _show_event_handle
     kernel32 = ctypes.windll.kernel32
