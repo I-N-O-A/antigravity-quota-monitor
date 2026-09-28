@@ -2,7 +2,7 @@
 Antigravity Quota Monitor - Windows System Tray Utility
 Monitors API limits and quotas for Gemini and Claude/GPT model groups in real-time.
 Built with PyQt5 for native Windows 11 frosted acrylic glass, seamless 12px DWM rounding
-(zero corner artifacts), ultra-responsive dynamic scaling from standard to micro-widget sizes,
+(zero corner artifacts), true non-scrolling fluid responsive scaling down to micro-widget sizes (170x190),
 and high-end vector glass-style icons.
 """
 
@@ -44,7 +44,7 @@ from PyQt5.QtGui import (
 from PyQt5.QtSvg import QSvgRenderer
 from PyQt5.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QHBoxLayout, QLabel,
-    QPushButton, QProgressBar, QFrame, QScrollArea, QSystemTrayIcon,
+    QPushButton, QProgressBar, QFrame, QSizePolicy, QSystemTrayIcon,
     QMenu, QAction
 )
 
@@ -127,8 +127,8 @@ DEFAULT_CONFIG = {
     "background_refresh_seconds": 60,
     "live_refresh_seconds": 10,
     "pinned": False,
-    "win_width": 380,
-    "win_height": 535,
+    "win_width": 350,
+    "win_height": 450,
     "pos_x": None,
     "pos_y": None
 }
@@ -333,7 +333,7 @@ def render_svg_to_pixmap(svg_str, width, height):
 # ----------------- GLASS-STYLE ICON & MEDALLION RENDERERS -----------------
 
 def create_glass_brand_medallion(svg_str, size=30, icon_size=17, glow_color="#38bdf8"):
-    size = int(size)
+    size = max(14, int(size))
     pix = QPixmap(size, size)
     pix.fill(Qt.transparent)
     p = QPainter(pix)
@@ -382,7 +382,7 @@ def create_glass_brand_medallion(svg_str, size=30, icon_size=17, glow_color="#38
     return pix
 
 def create_glass_icon_pixmap(svg_str, size=32, inner_size=16, is_hover=False, is_active=False):
-    size = int(size)
+    size = max(16, int(size))
     pix = QPixmap(size, size)
     pix.fill(Qt.transparent)
     p = QPainter(pix)
@@ -405,19 +405,16 @@ def create_glass_icon_pixmap(svg_str, size=32, inner_size=16, is_hover=False, is
         border_top = QColor(255, 255, 255, 65)
         border_bot = QColor(255, 255, 255, 18)
 
-    # Glass disc
     p.setPen(Qt.NoPen)
     p.setBrush(bg_color)
     p.drawRoundedRect(rect, radius, radius)
 
-    # Upper specular curve
     grad_shine = QLinearGradient(0, 0, 0, size * 0.6)
     grad_shine.setColorAt(0.0, QColor(255, 255, 255, 45 if not is_hover else 75))
     grad_shine.setColorAt(1.0, QColor(255, 255, 255, 0))
     p.setBrush(grad_shine)
     p.drawRoundedRect(rect, radius, radius)
 
-    # Glass rim
     grad_border = QLinearGradient(0, 0, 0, size)
     grad_border.setColorAt(0.0, border_top)
     grad_border.setColorAt(1.0, border_bot)
@@ -426,7 +423,6 @@ def create_glass_icon_pixmap(svg_str, size=32, inner_size=16, is_hover=False, is
     p.setBrush(Qt.NoBrush)
     p.drawRoundedRect(rect, radius, radius)
 
-    # Render glyph inside
     offset = (size - inner_size) / 2.0
     renderer = QSvgRenderer(QByteArray(svg_str.encode('utf-8')))
     renderer.render(p, QRectF(offset, offset, inner_size, inner_size))
@@ -435,7 +431,7 @@ def create_glass_icon_pixmap(svg_str, size=32, inner_size=16, is_hover=False, is
     return pix
 
 def create_antigravity_glass_logo(size=32):
-    size = int(size)
+    size = max(16, int(size))
     pix = QPixmap(size, size)
     pix.fill(Qt.transparent)
     p = QPainter(pix)
@@ -445,7 +441,6 @@ def create_antigravity_glass_logo(size=32):
     rect = QRectF(1.0, 1.0, size - 2.0, size - 2.0)
     radius = (size - 2.0) / 2.0
 
-    # Glass orb gradient fill
     grad_bg = QLinearGradient(0, 0, size, size)
     grad_bg.setColorAt(0.0, QColor(56, 189, 248, 50))
     grad_bg.setColorAt(0.7, QColor(99, 102, 241, 35))
@@ -454,23 +449,20 @@ def create_antigravity_glass_logo(size=32):
     p.setBrush(grad_bg)
     p.drawRoundedRect(rect, radius, radius)
 
-    # Top specular glass shine
     grad_shine = QLinearGradient(0, 0, 0, size * 0.55)
     grad_shine.setColorAt(0.0, QColor(255, 255, 255, 60))
     grad_shine.setColorAt(1.0, QColor(255, 255, 255, 0))
     p.setBrush(grad_shine)
     p.drawRoundedRect(rect, radius, radius)
 
-    # Specular rim
     pen_rim = QPen(QColor(255, 255, 255, 90), 1.0)
     p.setPen(pen_rim)
     p.setBrush(Qt.NoBrush)
     p.drawRoundedRect(rect, radius, radius)
 
-    # Inner Antigravity Delta Glyph
     cx, cy = size / 2.0, size / 2.0
     scale_f = size / 32.0
-    pen_glyph = QPen(QColor(255, 255, 255, 250), max(1.2, 1.8 * scale_f))
+    pen_glyph = QPen(QColor(255, 255, 255, 250), max(1.0, 1.8 * scale_f))
     pen_glyph.setCapStyle(Qt.RoundCap)
     pen_glyph.setJoinStyle(Qt.RoundJoin)
     p.setPen(pen_glyph)
@@ -482,7 +474,6 @@ def create_antigravity_glass_logo(size=32):
     path.closeSubpath()
     p.drawPath(path)
 
-    # Core levitating orb
     p.setPen(Qt.NoPen)
     p.setBrush(QColor(56, 189, 248, 255))
     p.drawEllipse(QPointF(cx, cy - 0.5 * scale_f), 2.2 * scale_f, 2.2 * scale_f)
@@ -493,7 +484,7 @@ def create_antigravity_glass_logo(size=32):
 # ----------------- CUSTOM GLASS BUTTON -----------------
 
 class GlassButton(QPushButton):
-    def __init__(self, svg_str, size=32, inner_size=16, is_active=False, parent=None):
+    def __init__(self, svg_str, size=30, inner_size=15, is_active=False, parent=None):
         super().__init__(parent)
         self.svg_str = svg_str
         self.btn_size = int(size)
@@ -524,27 +515,28 @@ class GlassButton(QPushButton):
         self.setIconSize(QSize(self.btn_size, self.btn_size))
         self.setStyleSheet("QPushButton { background: transparent; border: none; padding: 0px; }")
 
-# ----------------- HIGH-END SCALABLE GLASS QUOTA CARD -----------------
+# ----------------- ADAPTIVE NON-SCROLLING GLASS QUOTA CARD -----------------
 
-class PremiumGlassQuotaCard(QFrame):
+class AdaptiveGlassQuotaCard(QFrame):
     def __init__(self, group_name, badge_text, brand_svg, accent_color="#38bdf8", parent=None):
         super().__init__(parent)
         self.brand_svg = brand_svg
         self.accent_color = accent_color
-        self.setObjectName("premiumGlassCard")
-        self.set_card_style(16)
+        self.setObjectName("adaptiveGlassCard")
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.set_card_style(14)
 
         self.layout = QVBoxLayout(self)
-        self.layout.setContentsMargins(16, 12, 16, 12)
-        self.layout.setSpacing(6)
+        self.layout.setContentsMargins(14, 10, 14, 10)
+        self.layout.setSpacing(4)
 
         # Header Row: [Glass Medallion] Title      [Glass Badge]
         self.hdr = QHBoxLayout()
-        self.hdr.setSpacing(8)
+        self.hdr.setSpacing(6)
 
         self.brand_icon = QLabel()
-        self.brand_icon.setFixedSize(28, 28)
-        self.brand_icon.setPixmap(create_glass_brand_medallion(brand_svg, 28, 16, accent_color))
+        self.brand_icon.setFixedSize(26, 26)
+        self.brand_icon.setPixmap(create_glass_brand_medallion(brand_svg, 26, 15, accent_color))
         self.hdr.addWidget(self.brand_icon)
 
         self.title = QLabel(group_name)
@@ -555,23 +547,28 @@ class PremiumGlassQuotaCard(QFrame):
         self.hdr.addStretch()
 
         self.badge = QLabel(badge_text)
-        self.set_badge_style(3, 8, 9, 8)
+        self.set_badge_style(2, 7, 8, 8)
         self.hdr.addWidget(self.badge)
         self.layout.addLayout(self.hdr)
 
         # 5h Metric Row
         self.r_5h = QHBoxLayout()
-        self.r_5h.setSpacing(6)
+        self.r_5h.setSpacing(5)
 
         self.icon_5h = QLabel()
-        self.icon_5h.setFixedSize(14, 14)
-        self.icon_5h.setPixmap(render_svg_to_pixmap(SVG_CLOCK, 14, 14))
+        self.icon_5h.setFixedSize(13, 13)
+        self.icon_5h.setPixmap(render_svg_to_pixmap(SVG_CLOCK, 13, 13))
         self.r_5h.addWidget(self.icon_5h)
 
         self.lbl_5h = QLabel("5h Window")
         self.lbl_5h.setFont(QFont("Segoe UI Variable Text", 9, QFont.DemiBold))
         self.lbl_5h.setStyleSheet("color: rgba(255, 255, 255, 0.85);")
         self.r_5h.addWidget(self.lbl_5h)
+
+        self.time_5h_inline = QLabel("Loading...")
+        self.time_5h_inline.setFont(QFont("Segoe UI Variable Small", 8))
+        self.time_5h_inline.setStyleSheet("color: rgba(255, 255, 255, 0.45);")
+        self.r_5h.addWidget(self.time_5h_inline)
 
         self.r_5h.addStretch()
 
@@ -581,7 +578,7 @@ class PremiumGlassQuotaCard(QFrame):
         self.r_5h.addWidget(self.val_5h)
         self.layout.addLayout(self.r_5h)
 
-        # Neon Gradient Progress Bar
+        # 5h Progress Bar
         self.bar_5h = QProgressBar()
         self.bar_5h.setFixedHeight(4)
         self.bar_5h.setTextVisible(False)
@@ -589,24 +586,30 @@ class PremiumGlassQuotaCard(QFrame):
         self.set_neon_bar(self.bar_5h, 1.0)
         self.layout.addWidget(self.bar_5h)
 
-        self.time_5h = QLabel("Loading...")
-        self.time_5h.setFont(QFont("Segoe UI Variable Small", 8))
-        self.time_5h.setStyleSheet("color: rgba(255, 255, 255, 0.48); margin-left: 2px;")
-        self.layout.addWidget(self.time_5h)
+        # 5h separate time label (visible in spacious mode)
+        self.time_5h_bottom = QLabel("Loading...")
+        self.time_5h_bottom.setFont(QFont("Segoe UI Variable Small", 8))
+        self.time_5h_bottom.setStyleSheet("color: rgba(255, 255, 255, 0.45); margin-left: 2px;")
+        self.layout.addWidget(self.time_5h_bottom)
 
         # Weekly Metric Row
         self.r_wk = QHBoxLayout()
-        self.r_wk.setSpacing(6)
+        self.r_wk.setSpacing(5)
 
         self.icon_wk = QLabel()
-        self.icon_wk.setFixedSize(14, 14)
-        self.icon_wk.setPixmap(render_svg_to_pixmap(SVG_CALENDAR, 14, 14))
+        self.icon_wk.setFixedSize(13, 13)
+        self.icon_wk.setPixmap(render_svg_to_pixmap(SVG_CALENDAR, 13, 13))
         self.r_wk.addWidget(self.icon_wk)
 
         self.lbl_wk = QLabel("Weekly Limit")
         self.lbl_wk.setFont(QFont("Segoe UI Variable Text", 9, QFont.DemiBold))
         self.lbl_wk.setStyleSheet("color: rgba(255, 255, 255, 0.85);")
         self.r_wk.addWidget(self.lbl_wk)
+
+        self.time_wk_inline = QLabel("Loading...")
+        self.time_wk_inline.setFont(QFont("Segoe UI Variable Small", 8))
+        self.time_wk_inline.setStyleSheet("color: rgba(255, 255, 255, 0.45);")
+        self.r_wk.addWidget(self.time_wk_inline)
 
         self.r_wk.addStretch()
 
@@ -616,6 +619,7 @@ class PremiumGlassQuotaCard(QFrame):
         self.r_wk.addWidget(self.val_wk)
         self.layout.addLayout(self.r_wk)
 
+        # Weekly Progress Bar
         self.bar_wk = QProgressBar()
         self.bar_wk.setFixedHeight(4)
         self.bar_wk.setTextVisible(False)
@@ -623,17 +627,18 @@ class PremiumGlassQuotaCard(QFrame):
         self.set_neon_bar(self.bar_wk, 1.0)
         self.layout.addWidget(self.bar_wk)
 
-        self.time_wk = QLabel("Loading...")
-        self.time_wk.setFont(QFont("Segoe UI Variable Small", 8))
-        self.time_wk.setStyleSheet("color: rgba(255, 255, 255, 0.48); margin-left: 2px;")
-        self.layout.addWidget(self.time_wk)
+        # Weekly separate time label
+        self.time_wk_bottom = QLabel("Loading...")
+        self.time_wk_bottom.setFont(QFont("Segoe UI Variable Small", 8))
+        self.time_wk_bottom.setStyleSheet("color: rgba(255, 255, 255, 0.45); margin-left: 2px;")
+        self.layout.addWidget(self.time_wk_bottom)
 
         self.bucket_5h_reset = None
         self.bucket_wk_reset = None
 
     def set_card_style(self, radius):
         self.setStyleSheet(f"""
-            #premiumGlassCard {{
+            #adaptiveGlassCard {{
                 background: qlineargradient(x1:0, y1:0, x2:0, y2:1, 
                     stop:0 rgba(255, 255, 255, 0.08), 
                     stop:0.1 rgba(255, 255, 255, 0.02), 
@@ -687,7 +692,9 @@ class PremiumGlassQuotaCard(QFrame):
             self.val_5h.setStyleSheet(f"color: {color}; font-weight: bold;")
             self.set_neon_bar(self.bar_5h, frac)
             self.bucket_5h_reset = b_5h.get("reset_time")
-            self.time_5h.setText(format_ref_countdown(self.bucket_5h_reset))
+            t_str = format_ref_countdown(self.bucket_5h_reset)
+            self.time_5h_inline.setText(t_str)
+            self.time_5h_bottom.setText(t_str)
 
         if b_wk:
             frac = b_wk.get("remaining_fraction", 1.0)
@@ -698,45 +705,49 @@ class PremiumGlassQuotaCard(QFrame):
             self.val_wk.setStyleSheet(f"color: {color}; font-weight: bold;")
             self.set_neon_bar(self.bar_wk, frac)
             self.bucket_wk_reset = b_wk.get("reset_time")
-            self.time_wk.setText(format_ref_countdown(self.bucket_wk_reset))
+            t_str = format_ref_countdown(self.bucket_wk_reset)
+            self.time_wk_inline.setText(t_str)
+            self.time_wk_bottom.setText(t_str)
 
     def tick_second(self):
         if self.bucket_5h_reset:
-            self.time_5h.setText(format_ref_countdown(self.bucket_5h_reset))
+            t_str = format_ref_countdown(self.bucket_5h_reset)
+            self.time_5h_inline.setText(t_str)
+            self.time_5h_bottom.setText(t_str)
         if self.bucket_wk_reset:
-            self.time_wk.setText(format_ref_countdown(self.bucket_wk_reset))
+            t_str = format_ref_countdown(self.bucket_wk_reset)
+            self.time_wk_inline.setText(t_str)
+            self.time_wk_bottom.setText(t_str)
 
-    def update_scaling(self, scale):
-        # Dynamic responsive scaling from 1.0 down to 0.45
-        pad_h = max(8, int(16 * scale))
-        pad_v = max(6, int(12 * scale))
-        spacing = max(3, int(6 * scale))
+    def update_scaling(self, scale, win_h):
+        pad_h = max(6, int(14 * scale))
+        pad_v = max(3, int(10 * scale))
+        spacing = max(2, int(4 * scale))
         self.layout.setContentsMargins(pad_h, pad_v, pad_h, pad_v)
         self.layout.setSpacing(spacing)
 
-        # Card corner radius scales gracefully
-        card_radius = max(8, int(16 * scale))
+        card_radius = max(8, int(14 * scale))
         self.set_card_style(card_radius)
 
         # Brand medallion
-        medallion_sz = max(18, int(28 * scale))
-        inner_sz = max(10, int(16 * scale))
-        self.brand_icon.setFixedSize(medallion_sz, medallion_sz)
-        self.brand_icon.setPixmap(create_glass_brand_medallion(self.brand_svg, medallion_sz, inner_sz, self.accent_color))
+        med_sz = max(16, int(26 * scale))
+        in_sz = max(9, int(15 * scale))
+        self.brand_icon.setFixedSize(med_sz, med_sz)
+        self.brand_icon.setPixmap(create_glass_brand_medallion(self.brand_svg, med_sz, in_sz, self.accent_color))
 
         # Title
         t_pt = max(7, int(11 * scale))
         self.title.setFont(QFont("Segoe UI Variable Display", t_pt, QFont.Bold))
 
         # Badge
-        b_pad_v = max(1, int(3 * scale))
-        b_pad_h = max(4, int(8 * scale))
-        b_rad = max(6, int(9 * scale))
+        b_pad_v = max(1, int(2 * scale))
+        b_pad_h = max(3, int(7 * scale))
+        b_rad = max(5, int(8 * scale))
         b_pt = max(6, int(8 * scale))
         self.set_badge_style(b_pad_v, b_pad_h, b_rad, b_pt)
 
         # Metric icons
-        icon_sz = max(9, int(14 * scale))
+        icon_sz = max(9, int(13 * scale))
         self.icon_5h.setFixedSize(icon_sz, icon_sz)
         self.icon_5h.setPixmap(render_svg_to_pixmap(SVG_CLOCK, icon_sz, icon_sz))
         self.icon_wk.setFixedSize(icon_sz, icon_sz)
@@ -750,17 +761,32 @@ class PremiumGlassQuotaCard(QFrame):
         self.val_5h.setFont(QFont("Segoe UI Variable Display", val_pt, QFont.Bold))
         self.val_wk.setFont(QFont("Segoe UI Variable Display", val_pt, QFont.Bold))
 
-        # Countdowns
+        # Adaptive time display:
+        # If height >= 380px: Show spacious layout with time under the bar
+        # If height < 380px: Show inline time right next to "5h Window", saving full rows so window can shrink!
         time_pt = max(5, int(8 * scale))
-        self.time_5h.setFont(QFont("Segoe UI Variable Small", time_pt))
-        self.time_wk.setFont(QFont("Segoe UI Variable Small", time_pt))
+        self.time_5h_inline.setFont(QFont("Segoe UI Variable Small", time_pt))
+        self.time_5h_bottom.setFont(QFont("Segoe UI Variable Small", time_pt))
+        self.time_wk_inline.setFont(QFont("Segoe UI Variable Small", time_pt))
+        self.time_wk_bottom.setFont(QFont("Segoe UI Variable Small", time_pt))
+
+        if win_h >= 380:
+            self.time_5h_inline.setVisible(False)
+            self.time_wk_inline.setVisible(False)
+            self.time_5h_bottom.setVisible(True)
+            self.time_wk_bottom.setVisible(True)
+        else:
+            self.time_5h_inline.setVisible(True)
+            self.time_wk_inline.setVisible(True)
+            self.time_5h_bottom.setVisible(False)
+            self.time_wk_bottom.setVisible(False)
 
         # Progress bars
         bar_h = max(2, int(4 * scale))
         self.bar_5h.setFixedHeight(bar_h)
         self.bar_wk.setFixedHeight(bar_h)
 
-# ----------------- MAIN GLASS FLOATING WINDOW -----------------
+# ----------------- MAIN GLASS FLOATING WINDOW (ZERO SCROLLING) -----------------
 
 class GlassWindow(QWidget):
     BORDER_WIDTH = 9
@@ -777,15 +803,18 @@ class GlassWindow(QWidget):
         self.setWindowTitle("Antigravity Quota Monitor")
         self.setAttribute(Qt.WA_TranslucentBackground)
 
-        w = max(200, self.config.get("win_width", 380))
-        h = max(260, self.config.get("win_height", 535))
+        w = max(180, self.config.get("win_width", 350))
+        h = max(200, self.config.get("win_height", 450))
         self.resize(w, h)
-        # Allow user to shrink to micro-widget (e.g. 200x260) without arbitrary aspect ratio limits!
-        self.setMinimumSize(180, 220)
+        # Allows user to freely shrink to micro-widget (e.g. 180x210) without scrollbar!
+        self.setMinimumSize(170, 190)
 
-        # Initial position
+        # Initial position clamped to visible screen workspace
+        screen = QApplication.primaryScreen().availableGeometry()
         if self.config.get("pos_x") is not None and self.config.get("pos_y") is not None:
-            self.move(self.config["pos_x"], self.config["pos_y"])
+            px = max(screen.left() + 10, min(screen.right() - w - 10, self.config["pos_x"]))
+            py = max(screen.top() + 10, min(screen.bottom() - h - 10, self.config["pos_y"]))
+            self.move(px, py)
         else:
             self.move_to_default_position()
 
@@ -809,20 +838,20 @@ class GlassWindow(QWidget):
 
     def init_ui(self):
         self.main_layout = QVBoxLayout(self)
-        self.main_layout.setContentsMargins(14, 12, 14, 12)
-        self.main_layout.setSpacing(8)
+        self.main_layout.setContentsMargins(12, 10, 12, 10)
+        self.main_layout.setSpacing(6)
 
         # 1. Header Bar: [Logo Orb]   Antigravity Quota   [Glass Pin] [Glass Close]
         self.hdr = QHBoxLayout()
-        self.hdr.setSpacing(8)
+        self.hdr.setSpacing(6)
 
         # Glass Logo Orb
         self.logo_lbl = QLabel()
-        self.logo_lbl.setPixmap(create_antigravity_glass_logo(size=30))
+        self.logo_lbl.setPixmap(create_antigravity_glass_logo(size=28))
         self.hdr.addWidget(self.logo_lbl)
 
         self.title_lbl = QLabel("Antigravity Quota")
-        self.title_lbl.setFont(QFont("Segoe UI Variable Display", 12, QFont.Bold))
+        self.title_lbl.setFont(QFont("Segoe UI Variable Display", 11, QFont.Bold))
         self.title_lbl.setStyleSheet("color: #ffffff;")
         self.hdr.addWidget(self.title_lbl)
 
@@ -830,62 +859,26 @@ class GlassWindow(QWidget):
 
         # Glass Pin Button
         pin_svg = SVG_PIN_ON if self.is_pinned else SVG_PIN_OFF
-        self.btn_pin = GlassButton(pin_svg, size=30, inner_size=15, is_active=self.is_pinned)
+        self.btn_pin = GlassButton(pin_svg, size=28, inner_size=14, is_active=self.is_pinned)
         self.btn_pin.setToolTip("Pin window (keep visible)")
         self.btn_pin.clicked.connect(self.toggle_pin)
         self.hdr.addWidget(self.btn_pin)
 
         # Glass Close Button
-        self.btn_close = GlassButton(SVG_CLOSE, size=30, inner_size=14)
+        self.btn_close = GlassButton(SVG_CLOSE, size=28, inner_size=13)
         self.btn_close.setToolTip("Close to system tray")
         self.btn_close.clicked.connect(self.hide)
         self.hdr.addWidget(self.btn_close)
 
         self.main_layout.addLayout(self.hdr)
 
-        # 2. Scroll Area (styled seamlessly with ultra-thin glass scrollbar if needed)
-        self.scroll = QScrollArea()
-        self.scroll.setWidgetResizable(True)
-        self.scroll.setFrameShape(QFrame.NoFrame)
-        self.scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        self.scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-        self.scroll.setStyleSheet("""
-            QScrollArea { background: transparent; border: none; }
-            QScrollBar:vertical {
-                border: none;
-                background: transparent;
-                width: 4px;
-                margin: 0px;
-            }
-            QScrollBar::handle:vertical {
-                background: rgba(255, 255, 255, 0.22);
-                border-radius: 2px;
-                min-height: 20px;
-            }
-            QScrollBar::handle:vertical:hover {
-                background: rgba(255, 255, 255, 0.40);
-            }
-            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0px; }
-            QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical { background: transparent; }
-        """)
+        # 2. CARDS DIRECTLY IN MAIN LAYOUT - ABSOLUTELY ZERO SCROLLING!
+        # Both Gemini and Claude cards always fit and scale fluidly to the window
+        self.card_gemini = AdaptiveGlassQuotaCard("Gemini Models", "FLASH & PRO", SVG_GEMINI, "#38bdf8", self)
+        self.main_layout.addWidget(self.card_gemini)
 
-        container = QWidget()
-        container.setStyleSheet("background: transparent;")
-        self.c_layout = QVBoxLayout(container)
-        self.c_layout.setContentsMargins(0, 0, 0, 0)
-        self.c_layout.setSpacing(8)
-
-        # Gemini Card
-        self.card_gemini = PremiumGlassQuotaCard("Gemini Models", "FLASH & PRO", SVG_GEMINI, "#38bdf8", container)
-        self.c_layout.addWidget(self.card_gemini)
-
-        # Claude & GPT Card
-        self.card_claude = PremiumGlassQuotaCard("Claude & GPT", "OPUS & SONNET", SVG_CLAUDE, "#fb923c", container)
-        self.c_layout.addWidget(self.card_claude)
-
-        self.c_layout.addStretch()
-        self.scroll.setWidget(container)
-        self.main_layout.addWidget(self.scroll)
+        self.card_claude = AdaptiveGlassQuotaCard("Claude & GPT", "OPUS & SONNET", SVG_CLAUDE, "#fb923c", self)
+        self.main_layout.addWidget(self.card_claude)
 
         # 3. Footer Bar: [● Live synchronized]      [Refresh] [External]
         self.footer = QHBoxLayout()
@@ -904,13 +897,13 @@ class GlassWindow(QWidget):
         self.footer.addStretch()
 
         # Glass Refresh Button
-        self.btn_refresh = GlassButton(SVG_REFRESH, size=30, inner_size=15)
+        self.btn_refresh = GlassButton(SVG_REFRESH, size=28, inner_size=14)
         self.btn_refresh.setToolTip("Refresh quotas now")
         self.btn_refresh.clicked.connect(self.app_manager.trigger_refresh)
         self.footer.addWidget(self.btn_refresh)
 
         # Glass External Link Button
-        self.btn_ext = GlassButton(SVG_EXTERNAL, size=30, inner_size=15)
+        self.btn_ext = GlassButton(SVG_EXTERNAL, size=28, inner_size=14)
         self.btn_ext.setToolTip("Open GitHub Repository")
         self.btn_ext.clicked.connect(self.open_repo)
         self.footer.addWidget(self.btn_ext)
@@ -943,20 +936,20 @@ class GlassWindow(QWidget):
         # Radius 12.0 perfectly matches Windows 11 DWMWCP_ROUND (2)
         path.addRoundedRect(rect, 12.0, 12.0)
 
-        # 1. True glass dark tint: reveals the desktop wallpaper through the acrylic blur
-        painter.fillPath(path, QColor(14, 20, 32, 28))
+        # 1. Dark glass tint: alpha 45 gives high-end smoked glass contrast with acrylic blur
+        painter.fillPath(path, QColor(14, 20, 32, 45))
 
         # 2. Specular glass reflection gradient at top edge
-        grad = QLinearGradient(0, 0, 0, min(120, int(self.height() * 0.4)))
-        grad.setColorAt(0.0, QColor(255, 255, 255, 25))
+        grad = QLinearGradient(0, 0, 0, min(100, int(self.height() * 0.4)))
+        grad.setColorAt(0.0, QColor(255, 255, 255, 28))
         grad.setColorAt(1.0, QColor(255, 255, 255, 0))
         painter.fillPath(path, grad)
 
         # 3. Delicate glass border highlight
         grad_border = QLinearGradient(0, 0, 0, self.height())
-        grad_border.setColorAt(0.0, QColor(255, 255, 255, 55))
-        grad_border.setColorAt(0.5, QColor(255, 255, 255, 22))
-        grad_border.setColorAt(1.0, QColor(255, 255, 255, 10))
+        grad_border.setColorAt(0.0, QColor(255, 255, 255, 60))
+        grad_border.setColorAt(0.5, QColor(255, 255, 255, 25))
+        grad_border.setColorAt(1.0, QColor(255, 255, 255, 12))
         pen = QPen(grad_border, 1.0)
         painter.setPen(pen)
         painter.drawPath(path)
@@ -995,8 +988,8 @@ class GlassWindow(QWidget):
                 return True, 15  # HTBOTTOM
 
             # Top header bar (Drag to move, excluding buttons)
-            header_h = min(45, max(26, int(h * 0.12)))
-            btn_clearance = min(80, max(50, int(w * 0.28)))
+            header_h = min(40, max(24, int(h * 0.14)))
+            btn_clearance = min(75, max(45, int(w * 0.28)))
             if p.y() <= header_h and p.x() < (w - btn_clearance):
                 return True, 2   # HTCAPTION
 
@@ -1010,39 +1003,38 @@ class GlassWindow(QWidget):
         self.config["win_height"] = h
         save_config(self.config)
 
-        # Continuous fluid scaling based on current dimensions
-        w_factor = w / 380.0
-        h_factor = h / 535.0
+        # Fluid responsive scaling based on dimensions
+        w_factor = w / 350.0
+        h_factor = h / 450.0
         factor = min(w_factor, h_factor)
-        scale = max(0.48, min(1.0, factor))
+        scale = max(0.45, min(1.15, factor))
 
-        margin_h = max(8, int(18 * scale))
-        margin_v = max(6, int(14 * scale))
-        spacing = max(4, int(10 * scale))
-        self.main_layout.setContentsMargins(margin_h, margin_v, margin_h, margin_v)
-        self.main_layout.setSpacing(spacing)
-        self.c_layout.setSpacing(max(4, int(8 * scale)))
+        m_h = max(6, int(12 * scale))
+        m_v = max(3, int(10 * scale))
+        sp = max(2, int(6 * scale))
+        self.main_layout.setContentsMargins(m_h, m_v, m_h, m_v)
+        self.main_layout.setSpacing(sp)
 
         # Header elements scaling
-        logo_sz = max(18, int(30 * scale))
+        logo_sz = max(16, int(28 * scale))
         self.logo_lbl.setPixmap(create_antigravity_glass_logo(logo_sz))
 
-        title_pt = max(7, int(12 * scale))
-        self.title_lbl.setFont(QFont("Segoe UI Variable Display", title_pt, QFont.Bold))
+        t_pt = max(7, int(11 * scale))
+        self.title_lbl.setFont(QFont("Segoe UI Variable Display", t_pt, QFont.Bold))
 
-        btn_sz = max(20, int(30 * scale))
-        btn_inner = max(10, int(15 * scale))
+        btn_sz = max(18, int(28 * scale))
+        btn_inner = max(9, int(14 * scale))
         self.btn_pin.set_button_size(btn_sz, btn_inner)
         self.btn_close.set_button_size(btn_sz, btn_inner)
         self.btn_refresh.set_button_size(btn_sz, btn_inner)
         self.btn_ext.set_button_size(btn_sz, btn_inner)
 
-        status_pt = max(6, int(8.5 * scale))
+        status_pt = max(6, int(8 * scale))
         self.lbl_status.setFont(QFont("Segoe UI Variable Text", status_pt, QFont.Medium))
 
         # Cards scaling
-        self.card_gemini.update_scaling(scale)
-        self.card_claude.update_scaling(scale)
+        self.card_gemini.update_scaling(scale, h)
+        self.card_claude.update_scaling(scale, h)
 
     def moveEvent(self, event):
         super().moveEvent(event)
