@@ -611,7 +611,7 @@ class QuotaApp:
         self.status_lbl = tk.Label(
             self.footer,
             text="Live synchronisiert",
-            font=("Segoe UI", 8.5),
+            font=("Segoe UI", 9),
             fg="#94a3b8",
             bg="#0f1422"
         )
@@ -620,7 +620,7 @@ class QuotaApp:
         self.refresh_btn = tk.Label(
             self.footer,
             text="🔄 Aktualisieren",
-            font=("Segoe UI", 8.5, "bold"),
+            font=("Segoe UI", 9, "bold"),
             fg="#f8fafc",
             bg="#1e293b",
             cursor="hand2",
@@ -778,15 +778,15 @@ class QuotaApp:
         # 5-Hour Bucket
         b5_row = tk.Frame(card, bg="#182234")
         b5_row.pack(fill="x", pady=(3, 2))
-        b5_title = tk.Label(b5_row, text="5-Stunden-Limit", font=("Segoe UI", 9.5, "semibold"), fg="#cbd5e1", bg="#182234")
+        b5_title = tk.Label(b5_row, text="5-Stunden-Limit", font=("Segoe UI", 10, "bold"), fg="#cbd5e1", bg="#182234")
         b5_title.pack(side="left")
-        b5_pct = tk.Label(b5_row, text="--%", font=("Segoe UI", 12.5, "bold"), fg="#f8fafc", bg="#182234")
+        b5_pct = tk.Label(b5_row, text="--%", font=("Segoe UI", 13, "bold"), fg="#f8fafc", bg="#182234")
         b5_pct.pack(side="right")
         
         b5_bar = RoundedProgressBar(card, height=8, bg_color="#182234", trough_color="#26344d")
         b5_bar.pack(fill="x", pady=(0, 2))
         
-        b5_reset = tk.Label(card, text="Reset: --", font=("Segoe UI", 8.5), fg="#94a3b8", bg="#182234")
+        b5_reset = tk.Label(card, text="Reset: --", font=("Segoe UI", 9), fg="#94a3b8", bg="#182234")
         b5_reset.pack(anchor="w", pady=(0, 5))
         
         # Separator line
@@ -796,15 +796,15 @@ class QuotaApp:
         # Weekly Bucket
         bw_row = tk.Frame(card, bg="#182234")
         bw_row.pack(fill="x", pady=(2, 2))
-        bw_title = tk.Label(bw_row, text="Wöchentliches Limit", font=("Segoe UI", 9.5, "semibold"), fg="#cbd5e1", bg="#182234")
+        bw_title = tk.Label(bw_row, text="Wöchentliches Limit", font=("Segoe UI", 10, "bold"), fg="#cbd5e1", bg="#182234")
         bw_title.pack(side="left")
-        bw_pct = tk.Label(bw_row, text="--%", font=("Segoe UI", 12.5, "bold"), fg="#f8fafc", bg="#182234")
+        bw_pct = tk.Label(bw_row, text="--%", font=("Segoe UI", 13, "bold"), fg="#f8fafc", bg="#182234")
         bw_pct.pack(side="right")
         
         bw_bar = RoundedProgressBar(card, height=8, bg_color="#182234", trough_color="#26344d")
         bw_bar.pack(fill="x", pady=(0, 2))
         
-        bw_reset = tk.Label(card, text="Reset: --", font=("Segoe UI", 8.5), fg="#94a3b8", bg="#182234")
+        bw_reset = tk.Label(card, text="Reset: --", font=("Segoe UI", 9), fg="#94a3b8", bg="#182234")
         bw_reset.pack(anchor="w")
         
         widgets = {
@@ -874,17 +874,17 @@ class QuotaApp:
         
         if compact:
             t_font = ("Segoe UI", 10, "bold")
-            s_font = ("Segoe UI", 7.5)
-            bt_font = ("Segoe UI", 8.5, "semibold")
+            s_font = ("Segoe UI", 8)
+            bt_font = ("Segoe UI", 9, "bold")
             pct_font = ("Segoe UI", 11, "bold")
             rst_font = ("Segoe UI", 8)
             bar_h = 6
         else:
-            t_font = ("Segoe UI", 11.5, "bold")
-            s_font = ("Segoe UI", 8.5)
-            bt_font = ("Segoe UI", 9.5, "semibold")
+            t_font = ("Segoe UI", 12, "bold")
+            s_font = ("Segoe UI", 9)
+            bt_font = ("Segoe UI", 10, "bold")
             pct_font = ("Segoe UI", 13, "bold")
-            rst_font = ("Segoe UI", 8.5)
+            rst_font = ("Segoe UI", 9)
             bar_h = 8
             
         for card_widgets in (self.gemini_widgets, self.claude_widgets):
