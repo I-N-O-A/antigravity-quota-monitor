@@ -1,8 +1,8 @@
 """
 Antigravity Quota Monitor - Windows System Tray Utility
 Monitors API limits and usage for Gemini and Claude/GPT model groups in real-time.
-Features floating, resizable glassmorphic window, real-time second-by-second countdowns,
-Windows 11 acrylic styling, heavily rounded corners, and centered tray icon.
+Features floating, multi-border resizable glassmorphic window, real-time second-by-second countdowns,
+Windows 11 acrylic styling, anti-aliased rounded corners, and centered tray icon.
 """
 
 import os
@@ -59,7 +59,7 @@ def ensure_default_desktop():
 
 ensure_default_desktop()
 
-# DPI Awareness for crisp fonts on Windows High-DPI screens
+# DPI Awareness for crisp rendering on Windows High-DPI screens
 try:
     ctypes.windll.shcore.SetProcessDpiAwareness(1)
 except Exception:
@@ -80,7 +80,7 @@ DEFAULT_CONFIG = {
     "live_refresh_seconds": 10,
     "pinned": False,
     "theme": "dark",
-    "win_width": 380,
+    "win_width": 390,
     "win_height": 520,
     "custom_pos": False,
     "pos_x": None,
@@ -119,8 +119,8 @@ def get_work_area():
     ctypes.windll.user32.SystemParametersInfoW(SPI_GETWORKAREA, 0, ctypes.byref(rect), 0)
     return rect.left, rect.top, rect.right, rect.bottom
 
-# Windows 11 DWM Styling: Rounded Corners, Dark Mode, Acrylic
-def apply_dwm_styling(root, width=None, height=None):
+# Windows 11 DWM Styling: Dark Mode & Acrylic Backdrop
+def apply_dwm_styling(root):
     try:
         root.update_idletasks()
         hwnd = root.winfo_id()
@@ -141,15 +141,6 @@ def apply_dwm_styling(root, width=None, height=None):
         ctypes.windll.dwmapi.DwmSetWindowAttribute(
             top_hwnd, 38, ctypes.byref(val_acrylic), ctypes.sizeof(val_acrylic)
         )
-        
-        # 4. Strongly rounded window region for modern curved glass look
-        w = width if width else root.winfo_width()
-        h = height if height else root.winfo_height()
-        if w > 30 and h > 30:
-            corner_radius = 40
-            rgn = ctypes.windll.gdi32.CreateRoundRectRgn(0, 0, w + 1, h + 1, corner_radius, corner_radius)
-            if rgn:
-                ctypes.windll.user32.SetWindowRgn(top_hwnd, rgn, True)
     except Exception:
         pass
 
@@ -237,7 +228,7 @@ def fetch_usage_data():
         creationflags = subprocess.CREATE_NO_WINDOW
         startupinfo = subprocess.STARTUPINFO()
         startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-        startupinfo.wShowWindow = 0  # SW_HIDE
+        startupinfo.wShowWindow = 0
     
     try:
         proc = subprocess.run(
@@ -249,7 +240,7 @@ def fetch_usage_data():
             startupinfo=startupinfo
         )
         if proc.returncode != 0:
-            return None, f"Exit-Code {proc.returncode}: {proc.stderr.strip() or 'Failed to fetch usage data'}"
+            return None, f"Exit-Code {proc.returncode}: {proc.stderr.strip() or 'Fehler beim Abruf'}"
         
         stdout = proc.stdout.strip()
         s_idx = stdout.find("{")
@@ -262,7 +253,7 @@ def fetch_usage_data():
         cmd_data = data.get("command", {}).get("data", {})
         return cmd_data, None
     except subprocess.TimeoutExpired:
-        return None, "Timeout while querying usage data"
+        return None, "Zeitüberschreitung beim Abruf der Daten"
     except Exception as e:
         return None, str(e)
 
@@ -274,8 +265,8 @@ def format_countdown_seconds(target_dt, fraction=1.0):
         diff = int((target_dt - now_dt).total_seconds())
         if diff <= 0:
             if fraction >= 0.999:
-                return "100% Ready"
-            return "Reset pending • Refreshing"
+                return "100% bereit"
+            return "Reset fällig • lädt nach"
         
         days = diff // 86400
         rem = diff % 86400
@@ -283,24 +274,20 @@ def format_countdown_seconds(target_dt, fraction=1.0):
         mins = (rem % 3600) // 60
         secs = rem % 60
         
-        # Local reset time display format: "4h 56m (09/29 00:05)"
-        local_target = target_dt.astimezone()
-        time_str = local_target.strftime("%m/%d %H:%M")
-        
         if days > 0:
-            return f"{days}d {hours}h {mins}m ({time_str})"
+            return f"Reset in {days}T {hours}Std"
         elif hours > 0:
-            return f"{hours}h {mins:02d}m {secs:02d}s ({time_str})"
+            return f"Reset in {hours}h {mins:02d}m {secs:02d}s"
         elif mins > 0:
-            return f"{mins}m {secs:02d}s ({time_str})"
+            return f"Reset in {mins}m {secs:02d}s"
         else:
-            return f"{secs}s ({time_str})"
+            return f"Reset in {secs}s"
     except Exception:
         return "Reset: --"
 
 def get_color_for_fraction(fraction):
     if fraction >= 0.50:
-        return "#10b981"  # Emerald Green (matching the reference UI)
+        return "#10b981"  # Emerald Green
     elif fraction >= 0.20:
         return "#f59e0b"  # Amber Orange
     else:
@@ -312,31 +299,28 @@ def create_tray_image(min_fraction=1.0):
     img = Image.new("RGBA", (canvas_size, canvas_size), (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)
     
-    # Outer dark glass background circle
     pad = 12
     draw.ellipse(
         (pad, pad, canvas_size - pad, canvas_size - pad),
-        fill=(14, 18, 30, 255),
-        outline=(50, 60, 80, 255),
+        fill=(18, 24, 38, 255),
+        outline=(55, 65, 81, 255),
         width=4
     )
     
-    # Ring track
     track_pad = 24
     draw.ellipse(
         (track_pad, track_pad, canvas_size - track_pad, canvas_size - track_pad),
-        outline=(30, 40, 58, 255),
+        outline=(40, 50, 68, 255),
         width=18
     )
     
-    # Progress Arc
     sweep = max(18, int(min_fraction * 360))
     if min_fraction >= 0.50:
-        color = (16, 185, 129, 255)  # Emerald
+        color = (16, 185, 129, 255)
     elif min_fraction >= 0.20:
-        color = (245, 158, 11, 255)  # Amber
+        color = (245, 158, 11, 255)
     else:
-        color = (239, 68, 68, 255)   # Rose Red
+        color = (239, 68, 68, 255)
         
     draw.arc(
         (track_pad, track_pad, canvas_size - track_pad, canvas_size - track_pad),
@@ -346,7 +330,6 @@ def create_tray_image(min_fraction=1.0):
         width=18
     )
     
-    # Centered 'AG' Monogram (exact bounding box offset centering)
     try:
         font = ImageFont.truetype("segoeuib.ttf", 92)
     except Exception:
@@ -359,57 +342,10 @@ def create_tray_image(min_fraction=1.0):
     ty = (canvas_size - th) / 2.0 - bbox[1]
     draw.text((tx, ty), "AG", fill=(255, 255, 255, 255), font=font)
     
-    # High-quality downsampling to 64x64 for Windows System Tray
     return img.resize((64, 64), Image.Resampling.LANCZOS)
 
-# UI Components: Rounded Pill Progress Bar
-class RoundedProgressBar(tk.Canvas):
-    def __init__(self, parent, height=6, bg_color="#131926", trough_color="#20293a", **kwargs):
-        super().__init__(parent, height=height, bg=bg_color, highlightthickness=0, bd=0, **kwargs)
-        self.w = 300
-        self.h = height
-        self.bg_color = bg_color
-        self.trough_color = trough_color
-        self.fraction = 1.0
-        self.bar_color = "#10b981"
-        self.bind("<Configure>", self.on_resize)
-    
-    def on_resize(self, event):
-        if event.width > 5:
-            self.w = event.width
-            self.draw_bar()
-    
-    def set_value(self, fraction):
-        self.fraction = max(0.0, min(1.0, fraction))
-        self.bar_color = get_color_for_fraction(self.fraction)
-        self.draw_bar()
-    
-    def set_height(self, h):
-        self.h = max(4, h)
-        self.config(height=self.h)
-        self.draw_bar()
-        
-    def draw_bar(self):
-        self.delete("all")
-        h = self.h
-        w = self.w
-        r = h / 2.0
-        if w <= 0 or h <= 0:
-            return
-        
-        # Trough (Pill shape)
-        self.create_arc(0, 0, h, h, start=90, extent=180, fill=self.trough_color, outline="")
-        self.create_rectangle(r, 0, max(r, w - r), h, fill=self.trough_color, outline="")
-        self.create_arc(max(0, w - h), 0, w, h, start=-90, extent=180, fill=self.trough_color, outline="")
-        
-        # Progress fill
-        fill_w = int(w * self.fraction)
-        if fill_w > h:
-            self.create_arc(0, 0, h, h, start=90, extent=180, fill=self.bar_color, outline="")
-            self.create_rectangle(r, 0, fill_w - r, h, fill=self.bar_color, outline="")
-            self.create_arc(fill_w - h, 0, fill_w, h, start=-90, extent=180, fill=self.bar_color, outline="")
-        elif fill_w > 0:
-            self.create_oval(0, 0, max(fill_w, h), h, fill=self.bar_color, outline="")
+# QuotaApp with True Canvas-based Glassmorphism UI
+TRANSPARENT_KEY = "#010203"
 
 class QuotaApp:
     def __init__(self):
@@ -421,10 +357,10 @@ class QuotaApp:
         self.pinned = self.config.get("pinned", False)
         self.msg_queue = queue.Queue()
         
-        # Target reset datetimes for real-time live ticking
+        # Reset target cache for live 1-second countdowns
         self.bucket_reset_targets = {}
         
-        # Window & Drag / Resize State
+        # Window & Interaction State
         self.is_open = False
         self.open_timestamp = 0
         self.last_hide_time = 0
@@ -446,23 +382,21 @@ class QuotaApp:
         self.resize_start_w = 0
         self.resize_start_h = 0
         
-        self.win_width = max(280, min(800, self.config.get("win_width", 380)))
-        self.win_height = max(340, min(1000, self.config.get("win_height", 520)))
+        self.win_width = max(310, min(900, self.config.get("win_width", 390)))
+        self.win_height = max(360, min(1000, self.config.get("win_height", 520)))
         
-        # Init Tkinter Root
+        # Tkinter Root Setup
         self.root = tk.Tk()
         self.root.title("Antigravity Quota")
-        # Glassmorphic deep translucent obsidian background matching reference
-        self.root.configure(bg="#0c101a")
         self.root.overrideredirect(True)
         self.root.attributes("-topmost", True)
         
-        # Soft translucent frosted glass effect
+        # Windows transparent colorkey for smooth anti-aliased rounded glass curves
         try:
-            self.root.attributes("-alpha", 0.94)
+            self.root.wm_attributes("-transparentcolor", TRANSPARENT_KEY)
         except Exception:
             pass
-        self.root.withdraw()  # Hidden on launch
+        self.root.configure(bg=TRANSPARENT_KEY)
         
         ico_path = os.path.join(APP_DIR, "icon.ico")
         if os.path.exists(ico_path):
@@ -471,9 +405,22 @@ class QuotaApp:
             except Exception:
                 pass
         
-        self.setup_ui()
+        # Main Canvas for high-performance Glassmorphic drawing
+        self.canvas = tk.Canvas(
+            self.root,
+            width=self.win_width,
+            height=self.win_height,
+            bg=TRANSPARENT_KEY,
+            highlightthickness=0,
+            bd=0
+        )
+        self.canvas.pack(fill="both", expand=True)
+        
         self.setup_resize_borders()
         self.bind_events()
+        
+        # Initial glass render
+        self.render_glass_ui()
         
         # Start queue poller
         self._process_queue()
@@ -482,7 +429,7 @@ class QuotaApp:
         self.tray_icon = None
         self.init_tray_icon()
         
-        # Ensure icon is pinned to visible taskbar in Windows 11
+        # Promote icon in Windows 11 taskbar
         self.root.after(1000, ensure_promoted_in_tray)
         
         # Fast click-outside polling loop (runs every 30ms)
@@ -491,15 +438,15 @@ class QuotaApp:
         # 1-second live ticker
         self._tick_live()
         
-        # Show Event IPC listener (allows desktop shortcut or start.bat to bring window to front)
+        # Single instance show event listener
         self._poll_show_event()
         
         # Initial data fetch
         self.trigger_refresh(silent=True)
 
-        # Open floating window on launch
+        # Show window on launch
         if "--minimized" not in sys.argv and "--silent" not in sys.argv:
-            self.root.after(300, self.show_window)
+            self.root.after(200, self.show_window)
 
     def post(self, callback, *args, **kwargs):
         self.msg_queue.put((callback, args, kwargs))
@@ -516,199 +463,175 @@ class QuotaApp:
             pass
         self.root.after(40, self._process_queue)
 
-    def setup_ui(self):
-        # Outer Glass Border Container with subtle edge
-        self.border_frame = tk.Frame(self.root, bg="#1a2233", bd=0)
-        self.border_frame.pack(fill="both", expand=True, padx=4, pady=4)
+    def round_poly(self, x1, y1, x2, y2, r=16, **kwargs):
+        """Draws a smooth anti-aliased rounded polygon on the canvas."""
+        points = [
+            x1+r, y1, x2-r, y1, x2, y1,
+            x2, y1+r, x2, y2-r, x2, y2,
+            x2-r, y2, x1+r, y2, x1, y2,
+            x1, y2-r, x1, y1+r, x1, y1
+        ]
+        return self.canvas.create_polygon(points, smooth=True, **kwargs)
+
+    def render_glass_ui(self):
+        """Renders the complete Glassmorphism UI with cards, specular highlights, and neon progress bars."""
+        self.canvas.delete("all")
+        w = self.win_width
+        h = self.win_height
         
-        # Main interior container (Deep Frosted Glass Slate)
-        self.main_container = tk.Frame(self.border_frame, bg="#0d121f", padx=14, pady=12)
-        self.main_container.pack(fill="both", expand=True, padx=1, pady=1)
+        # 1. Main outer glass body (deep translucent obsidian with luminous 1px border)
+        self.round_poly(4, 4, w - 4, h - 4, r=20, fill="#0c111e", outline="#2c3a54", width=1, tags="bg_poly")
+        # Specular light refraction line at top of glass window
+        self.canvas.create_line(24, 5, w - 24, 5, fill="#485c7f", width=1)
+        self.canvas.create_line(28, 6, w - 28, 6, fill="#202c42", width=1)
         
-        # Header (Clean, minimalist bar matching reference)
-        self.header = tk.Frame(self.main_container, bg="#0d121f", cursor="fleur")
-        self.header.pack(fill="x", pady=(0, 8))
+        # 2. Header
+        # Electric Blue Glass Logo Pill
+        self.round_poly(18, 16, 52, 40, r=8, fill="#2563eb", outline="#3b82f6", width=1)
+        self.canvas.create_text(35, 28, text="AG", fill="#ffffff", font=("Segoe UI", 10, "bold"))
         
-        # Title Box
-        self.title_box = tk.Frame(self.header, bg="#0d121f", cursor="fleur")
-        self.title_box.pack(side="left", fill="x", expand=True)
+        # Window Title
+        self.canvas.create_text(60, 28, text="Antigravity Quota", anchor="w", fill="#f8fafc", font=("Segoe UI", 13, "bold"), tags="header_drag")
         
-        title_row = tk.Frame(self.title_box, bg="#0d121f", cursor="fleur")
-        title_row.pack(anchor="w")
+        # LIVE Glass Badge
+        live_badge_fill = "#064e3b" if (time.time() - self.last_successful_fetch <= 15 and self.last_successful_fetch > 0) else ("#450a0a" if self.last_successful_fetch > 0 else "#064e3b")
+        live_badge_border = "#10b981" if (time.time() - self.last_successful_fetch <= 15 and self.last_successful_fetch > 0) else ("#ef4444" if self.last_successful_fetch > 0 else "#10b981")
+        live_text = "● LIVE" if (time.time() - self.last_successful_fetch <= 15 or self.last_successful_fetch == 0) else "● OFFLINE"
+        live_text_col = "#10b981" if (time.time() - self.last_successful_fetch <= 15 or self.last_successful_fetch == 0) else "#ef4444"
         
-        # Antigravity icon badge (pill)
-        self.logo_lbl = tk.Label(
-            title_row,
-            text="AG",
-            font=("Segoe UI", 9, "bold"),
-            fg="#ffffff",
-            bg="#2563eb",
-            padx=5,
-            pady=1
-        )
-        self.logo_lbl.pack(side="left", padx=(0, 8))
+        self.round_poly(206, 18, 268, 38, r=9, fill=live_badge_fill, outline=live_badge_border, width=1, tags="live_badge_bg")
+        self.canvas.create_text(237, 28, text=live_text, fill=live_text_col, font=("Segoe UI", 9, "bold"), tags="live_badge_txt")
         
-        self.title_lbl = tk.Label(
-            title_row,
-            text="Antigravity Quota",
-            font=("Segoe UI", 12, "bold"),
-            fg="#ffffff",
-            bg="#0d121f",
-            cursor="fleur"
-        )
-        self.title_lbl.pack(side="left")
+        # Header Action Buttons: Pin & Close
+        # Pin Button
+        pin_bg = "#1e293b" if self.pinned else "#141c2c"
+        pin_col = "#38bdf8" if self.pinned else "#94a3b8"
+        self.round_poly(w - 76, 17, w - 46, 39, r=6, fill=pin_bg, outline="#2b3b55", width=1, tags="btn_pin")
+        self.canvas.create_text(w - 61, 28, text="📌", fill=pin_col, font=("Segoe UI Emoji", 10), tags="btn_pin")
         
-        # Live Indicator in Header
-        self.live_badge = tk.Label(
-            title_row,
-            text="● LIVE",
-            font=("Segoe UI", 8, "bold"),
-            fg="#10b981",
-            bg="#064e3b",
-            padx=6,
-            pady=1
-        )
-        self.live_badge.pack(side="left", padx=(8, 0))
+        # Close Button
+        self.round_poly(w - 40, 17, w - 16, 39, r=6, fill="#141c2c", outline="#2b3b55", width=1, tags="btn_close")
+        self.canvas.create_text(w - 28, 28, text="✕", fill="#94a3b8", font=("Segoe UI", 10, "bold"), tags="btn_close")
         
-        # Header action buttons (Pin, Close) - Clean circular style
-        actions_box = tk.Frame(self.header, bg="#0d121f")
-        actions_box.pack(side="right", anchor="center")
+        # Subtitle
+        sub_text = "Angepinnt • Bleibt als Widget offen" if self.pinned else "Floating Glass Widget • Multi-Border Resizable"
+        self.canvas.create_text(20, 48, text=sub_text, anchor="w", fill="#94a3b8", font=("Segoe UI", 8), tags="sub_lbl")
         
-        # Pin button
-        self.pin_btn = tk.Label(
-            actions_box,
-            text="📌" if self.pinned else "📍",
-            font=("Segoe UI", 10),
-            fg="#38bdf8" if self.pinned else "#64748b",
-            bg="#0d121f",
-            cursor="hand2",
-            padx=4,
-            pady=2
-        )
-        self.pin_btn.pack(side="left", padx=(0, 4))
-        self.pin_btn.bind("<Button-1>", lambda e: self.toggle_pin())
+        # 3. Model Cards
+        card_h = max(160, int((h - 130) / 2))
+        y_card1 = 66
+        y_card2 = y_card1 + card_h + 10
         
-        # Close button
-        close_btn = tk.Label(
-            actions_box,
-            text="✕",
-            font=("Segoe UI", 11, "bold"),
-            fg="#64748b",
-            bg="#0d121f",
-            cursor="hand2",
-            padx=4,
-            pady=2
-        )
-        close_btn.pack(side="left")
-        close_btn.bind("<Button-1>", lambda e: self.hide_window())
-        close_btn.bind("<Enter>", lambda e: close_btn.config(fg="#ef4444"))
-        close_btn.bind("<Leave>", lambda e: close_btn.config(fg="#64748b"))
+        self.render_card(y_card1, card_h, "gemini", "Gemini Models", "Gemini Flash, Gemini Pro", "#38bdf8")
+        self.render_card(y_card2, card_h, "claude", "Claude & GPT Models", "Claude Opus, Claude Sonnet, GPT-OSS", "#f59e0b")
         
-        # Cards Scroll Container (Canvas + Scrollbar when needed)
-        self.scroll_canvas = tk.Canvas(self.main_container, bg="#0d121f", highlightthickness=0, bd=0)
-        self.scrollbar = tk.Scrollbar(self.main_container, orient="vertical", command=self.scroll_canvas.yview)
+        # 4. Footer
+        y_footer = h - 26
+        status_txt = "Live synchronisiert" if (time.time() - self.last_successful_fetch <= 15 or self.last_successful_fetch == 0) else "Kein Signal (>15s)"
+        status_col = "#94a3b8" if (time.time() - self.last_successful_fetch <= 15 or self.last_successful_fetch == 0) else "#ef4444"
+        self.canvas.create_text(20, y_footer, text=status_txt, anchor="w", fill=status_col, font=("Segoe UI", 9), tags="status_txt")
         
-        self.cards_frame = tk.Frame(self.scroll_canvas, bg="#0d121f")
-        self.canvas_window = self.scroll_canvas.create_window((0, 0), window=self.cards_frame, anchor="nw")
+        # Refresh Glass Button
+        self.round_poly(w - 128, y_footer - 16, w - 18, y_footer + 14, r=7, fill="#162032", outline="#2d3f5c", width=1, tags="btn_refresh")
+        self.canvas.create_line(w - 120, y_footer - 15, w - 26, y_footer - 15, fill="#3b5278", width=1)
+        refresh_label = "⌛ Lade..." if self.is_fetching else "Aktualisieren"
+        self.canvas.create_text(w - 73, y_footer, text=refresh_label, fill="#f8fafc", font=("Segoe UI", 9, "bold"), tags="btn_refresh")
+
+    def render_card(self, y, card_h, group_key, title, subtitle, badge_col):
+        w = self.win_width
         
-        self.scroll_canvas.configure(xscrollcommand=None, yscrollcommand=self.scrollbar.set)
+        # Frosted glass card surface
+        self.round_poly(16, y, w - 16, y + card_h, r=16, fill="#131b2c", outline="#25354e", width=1, tags=f"card_{group_key}")
+        # Top glass reflection line
+        self.canvas.create_line(30, y + 1, w - 30, y + 1, fill="#334768", width=1)
         
-        self.scroll_canvas.pack(side="top", fill="both", expand=True)
+        # Group Header
+        self.round_poly(28, y + 14, 38, y + 24, r=4, fill=badge_col)
+        self.canvas.create_text(46, y + 18, text=title, anchor="w", fill="#f8fafc", font=("Segoe UI", 11, "bold"))
+        self.canvas.create_text(46, y + 33, text=subtitle, anchor="w", fill="#94a3b8", font=("Segoe UI", 8))
         
-        def _on_canvas_configure(event):
-            self.scroll_canvas.itemconfig(self.canvas_window, width=event.width)
-        self.scroll_canvas.bind("<Configure>", _on_canvas_configure)
+        # Proportional vertical spacing
+        spacing_unit = (card_h - 40) / 4.0
         
-        def _on_frame_configure(event):
-            self.scroll_canvas.configure(scrollregion=self.scroll_canvas.bbox("all"))
-            # Auto-hide/show scrollbar if content exceeds canvas height
-            if self.cards_frame.winfo_reqheight() > self.scroll_canvas.winfo_height() + 5:
-                if not self.scrollbar.winfo_ismapped():
-                    self.scrollbar.pack(side="right", fill="y", before=self.scroll_canvas)
-            else:
-                if self.scrollbar.winfo_ismapped():
-                    self.scrollbar.pack_forget()
-        self.cards_frame.bind("<Configure>", _on_frame_configure)
+        # --- 5h Limit ---
+        y_5h_lbl = int(y + 40 + spacing_unit * 0.4)
+        self.canvas.create_text(28, y_5h_lbl, text="5-Stunden-Limit", anchor="w", fill="#cbd5e1", font=("Segoe UI", 9, "bold"))
         
-        # Mousewheel scrolling across all components
-        def _on_mousewheel(event):
-            if self.cards_frame.winfo_reqheight() > self.scroll_canvas.winfo_height():
-                self.scroll_canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
-        self.root.bind_all("<MouseWheel>", _on_mousewheel)
+        # Cached values or placeholders
+        pct_5h = self.bucket_reset_targets.get(f"{group_key}_5h", {}).get("pct_str", "--%")
+        frac_5h = self.bucket_reset_targets.get(f"{group_key}_5h", {}).get("fraction", 1.0)
+        col_5h = get_color_for_fraction(frac_5h)
+        self.canvas.create_text(w - 28, y_5h_lbl, text=pct_5h, anchor="e", fill=col_5h, font=("Segoe UI", 13, "bold"), tags=f"{group_key}_5h_pct")
         
-        # Build Model Group Cards
-        self.build_cards()
+        # 5h Progress Bar (glowing pill)
+        y_5h_bar = int(y_5h_lbl + 16)
+        bar_w = w - 56
+        self.round_poly(28, y_5h_bar, w - 28, y_5h_bar + 8, r=4, fill="#0a0e18", outline="#1e2a3e", width=1)
+        fill_5h = max(4, int(bar_w * frac_5h))
+        self.round_poly(28, y_5h_bar, 28 + fill_5h, y_5h_bar + 8, r=4, fill=col_5h, tags=f"{group_key}_5h_bar")
         
-        # Footer Bar (Compact, matching reference pill buttons)
-        self.footer = tk.Frame(self.main_container, bg="#0d121f")
-        self.footer.pack(fill="x", pady=(8, 0))
+        # 5h Reset countdown text
+        y_5h_rst = int(y_5h_bar + 18)
+        rst_5h = self.bucket_reset_targets.get(f"{group_key}_5h", {}).get("last_text", "Reset: --")
+        self.canvas.create_text(28, y_5h_rst, text=rst_5h, anchor="w", fill="#94a3b8", font=("Segoe UI", 9), tags=f"{group_key}_5h_rst")
         
-        self.status_lbl = tk.Label(
-            self.footer,
-            text="Live synchronized",
-            font=("Segoe UI", 9),
-            fg="#64748b",
-            bg="#0d121f"
-        )
-        self.status_lbl.pack(side="left", anchor="center")
+        # Divider Line
+        y_div = int(y_5h_rst + 16)
+        self.canvas.create_line(28, y_div, w - 28, y_div, fill="#1c2638", width=1)
         
-        self.refresh_btn = tk.Label(
-            self.footer,
-            text="🔄 Refresh",
-            font=("Segoe UI", 9, "bold"),
-            fg="#f8fafc",
-            bg="#1e293b",
-            cursor="hand2",
-            padx=12,
-            pady=5
-        )
-        self.refresh_btn.pack(side="right", anchor="center")
-        self.refresh_btn.bind("<Button-1>", lambda e: self.trigger_refresh(silent=False))
-        self.refresh_btn.bind("<Enter>", lambda e: self.refresh_btn.config(bg="#334155"))
-        self.refresh_btn.bind("<Leave>", lambda e: self.refresh_btn.config(bg="#1e293b"))
+        # --- Weekly Limit ---
+        y_w_lbl = int(y_div + 16)
+        self.canvas.create_text(28, y_w_lbl, text="Wöchentliches Limit", anchor="w", fill="#cbd5e1", font=("Segoe UI", 9, "bold"))
+        
+        pct_w = self.bucket_reset_targets.get(f"{group_key}_weekly", {}).get("pct_str", "--%")
+        frac_w = self.bucket_reset_targets.get(f"{group_key}_weekly", {}).get("fraction", 1.0)
+        col_w = get_color_for_fraction(frac_w)
+        self.canvas.create_text(w - 28, y_w_lbl, text=pct_w, anchor="e", fill=col_w, font=("Segoe UI", 13, "bold"), tags=f"{group_key}_w_pct")
+        
+        # Weekly Progress Bar
+        y_w_bar = int(y_w_lbl + 16)
+        self.round_poly(28, y_w_bar, w - 28, y_w_bar + 8, r=4, fill="#0a0e18", outline="#1e2a3e", width=1)
+        fill_w = max(4, int(bar_w * frac_w))
+        self.round_poly(28, y_w_bar, 28 + fill_w, y_w_bar + 8, r=4, fill=col_w, tags=f"{group_key}_w_bar")
+        
+        # Weekly Reset countdown text
+        y_w_rst = int(y_w_bar + 18)
+        rst_w = self.bucket_reset_targets.get(f"{group_key}_weekly", {}).get("last_text", "Reset: --")
+        self.canvas.create_text(28, y_w_rst, text=rst_w, anchor="w", fill="#94a3b8", font=("Segoe UI", 9), tags=f"{group_key}_w_rst")
 
     def setup_resize_borders(self):
-        """Creates 8 border resize handles along all edges and corners with clean seamless visuals."""
-        bs = 6   # border thickness
-        cs = 14  # corner dimension
-        # Match outer border frame background so there are NO bright indicator lines or colored squares!
-        color = "#1a2233"
+        """Creates 8 border resize handles along all edges and corners."""
+        bs = 6
+        cs = 14
+        color = "#182234"
+        hover_color = "#38bdf8"
         
         self.resize_handles = []
         
-        # North
         b_n = tk.Frame(self.root, bg=color, cursor="size_ns")
         b_n.place(x=cs, y=0, relwidth=1.0, width=-(cs * 2), height=bs)
         
-        # South
         b_s = tk.Frame(self.root, bg=color, cursor="size_ns")
         b_s.place(x=cs, rely=1.0, y=-bs, relwidth=1.0, width=-(cs * 2), height=bs)
         
-        # West (Left)
         b_w = tk.Frame(self.root, bg=color, cursor="size_we")
         b_w.place(x=0, y=cs, relheight=1.0, height=-(cs * 2), width=bs)
         
-        # East (Right)
         b_e = tk.Frame(self.root, bg=color, cursor="size_we")
         b_e.place(relx=1.0, x=-bs, y=cs, relheight=1.0, height=-(cs * 2), width=bs)
         
-        # Top-Left Corner
         b_nw = tk.Frame(self.root, bg=color, cursor="size_nw_se")
         b_nw.place(x=0, y=0, width=cs, height=cs)
         
-        # Top-Right Corner
         b_ne = tk.Frame(self.root, bg=color, cursor="size_ne_sw")
         b_ne.place(relx=1.0, x=-cs, y=0, width=cs, height=cs)
         
-        # Bottom-Left Corner
         b_sw = tk.Frame(self.root, bg=color, cursor="size_ne_sw")
         b_sw.place(x=0, rely=1.0, y=-cs, width=cs, height=cs)
         
-        # Bottom-Right Corner
         b_se = tk.Frame(self.root, bg=color, cursor="size_nw_se")
         b_se.place(relx=1.0, x=-cs, rely=1.0, y=-cs, width=cs, height=cs)
         
-        # Map handles to directions
         handles = [
             (b_n, "n"), (b_s, "s"), (b_w, "w"), (b_e, "e"),
             (b_nw, "nw"), (b_ne, "ne"), (b_sw, "sw"), (b_se, "se")
@@ -719,7 +642,8 @@ class QuotaApp:
             widget.bind("<Button-1>", lambda e, d=direction: self.start_resize(e, d))
             widget.bind("<B1-Motion>", self.do_resize)
             widget.bind("<ButtonRelease-1>", self.stop_resize)
-            # DO NOT change background color on hover or press! (Clean glass styling)
+            widget.bind("<Enter>", lambda e, w=widget: w.config(bg=hover_color))
+            widget.bind("<Leave>", lambda e, w=widget: w.config(bg=color))
             self.resize_handles.append(widget)
 
     def start_resize(self, event, direction):
@@ -744,26 +668,25 @@ class QuotaApp:
         new_x = self.resize_start_win_x
         new_y = self.resize_start_win_y
         
-        # Horizontal resizing
         if "e" in self.resize_direction:
-            new_w = max(280, min(800, self.resize_start_w + dx))
+            new_w = max(310, min(900, self.resize_start_w + dx))
         elif "w" in self.resize_direction:
             target_w = self.resize_start_w - dx
-            new_w = max(280, min(800, target_w))
+            new_w = max(310, min(900, target_w))
             new_x = self.resize_start_win_x + (self.resize_start_w - new_w)
             
-        # Vertical resizing
         if "s" in self.resize_direction:
-            new_h = max(340, min(1000, self.resize_start_h + dy))
+            new_h = max(360, min(1000, self.resize_start_h + dy))
         elif "n" in self.resize_direction:
             target_h = self.resize_start_h - dy
-            new_h = max(340, min(1000, target_h))
+            new_h = max(360, min(1000, target_h))
             new_y = self.resize_start_win_y + (self.resize_start_h - new_h)
             
         self.win_width = new_w
         self.win_height = new_h
         self.root.geometry(f"{new_w}x{new_h}+{new_x}+{new_y}")
-        apply_dwm_styling(self.root, new_w, new_h)
+        self.canvas.config(width=new_w, height=new_h)
+        self.render_glass_ui()
 
     def stop_resize(self, event):
         if self.is_resizing:
@@ -773,90 +696,22 @@ class QuotaApp:
             self.config["win_width"] = self.win_width
             self.config["win_height"] = self.win_height
             save_config(self.config)
-            apply_dwm_styling(self.root, self.win_width, self.win_height)
-
-    def build_cards(self):
-        # Card 1: Gemini Models
-        self.gemini_card, self.gemini_widgets = self.create_group_card(
-            title="Gemini Models",
-            subtitle="Gemini 2.5 Flash, Gemini 2.5 Pro",
-            badge_color="#38bdf8"
-        )
-        self.gemini_card.pack(fill="x", expand=True, pady=(0, 8))
-        
-        # Card 2: Claude & GPT Models
-        self.claude_card, self.claude_widgets = self.create_group_card(
-            title="Claude & GPT Models",
-            subtitle="Claude Opus, Claude Sonnet, GPT-OSS",
-            badge_color="#f59e0b"
-        )
-        self.claude_card.pack(fill="x", expand=True)
-
-    def create_group_card(self, title, subtitle, badge_color):
-        # Card container with glass acrylic styling matching reference
-        card = tk.Frame(self.cards_frame, bg="#131926", padx=12, pady=10)
-        
-        # Header row
-        head_row = tk.Frame(card, bg="#131926")
-        head_row.pack(fill="x", pady=(0, 6))
-        
-        badge = tk.Frame(head_row, bg=badge_color, width=8, height=8)
-        badge.pack(side="left", padx=(0, 7), pady=(4, 0))
-        
-        t_box = tk.Frame(head_row, bg="#131926")
-        t_box.pack(side="left", fill="x", expand=True)
-        
-        t_lbl = tk.Label(t_box, text=title, font=("Segoe UI", 11, "bold"), fg="#ffffff", bg="#131926")
-        t_lbl.pack(anchor="w")
-        s_lbl = tk.Label(t_box, text=subtitle, font=("Segoe UI", 8), fg="#64748b", bg="#131926")
-        s_lbl.pack(anchor="w")
-        
-        # 5-Hour Bucket (Clean minimalist styling matching screenshot)
-        b5_row = tk.Frame(card, bg="#131926")
-        b5_row.pack(fill="x", pady=(4, 1))
-        b5_title = tk.Label(b5_row, text="5h", font=("Segoe UI", 10, "bold"), fg="#cbd5e1", bg="#131926")
-        b5_title.pack(side="left")
-        b5_pct = tk.Label(b5_row, text="--%", font=("Segoe UI", 12, "bold"), fg="#10b981", bg="#131926")
-        b5_pct.pack(side="right")
-        
-        b5_bar = RoundedProgressBar(card, height=6, bg_color="#131926", trough_color="#20293a")
-        b5_bar.pack(fill="x", pady=(2, 2))
-        
-        b5_reset = tk.Label(card, text="Reset: --", font=("Segoe UI", 8), fg="#64748b", bg="#131926")
-        b5_reset.pack(anchor="w", pady=(0, 4))
-        
-        # Weekly Bucket
-        bw_row = tk.Frame(card, bg="#131926")
-        bw_row.pack(fill="x", pady=(3, 1))
-        bw_title = tk.Label(bw_row, text="Weekly", font=("Segoe UI", 10, "bold"), fg="#cbd5e1", bg="#131926")
-        bw_title.pack(side="left")
-        bw_pct = tk.Label(bw_row, text="--%", font=("Segoe UI", 12, "bold"), fg="#10b981", bg="#131926")
-        bw_pct.pack(side="right")
-        
-        bw_bar = RoundedProgressBar(card, height=6, bg_color="#131926", trough_color="#20293a")
-        bw_bar.pack(fill="x", pady=(2, 2))
-        
-        bw_reset = tk.Label(card, text="Reset: --", font=("Segoe UI", 8), fg="#64748b", bg="#131926")
-        bw_reset.pack(anchor="w", pady=(0, 2))
-        
-        widgets = {
-            "card": card,
-            "title": t_lbl,
-            "sub": s_lbl,
-            "5h_title": b5_title,
-            "5h_pct": b5_pct,
-            "5h_bar": b5_bar,
-            "5h_reset": b5_reset,
-            "w_title": bw_title,
-            "w_pct": bw_pct,
-            "w_bar": bw_bar,
-            "w_reset": bw_reset,
-        }
-        return card, widgets
 
     def bind_events(self):
-        # Drag window anywhere by header or title
+        # Window moving
         def start_move(event):
+            # Check if clicked on interactive buttons
+            tags = self.canvas.gettags("current")
+            if "btn_close" in tags:
+                self.hide_window()
+                return
+            if "btn_pin" in tags:
+                self.toggle_pin()
+                return
+            if "btn_refresh" in tags:
+                self.trigger_refresh(silent=False)
+                return
+                
             self.is_dragging = True
             self.mouse_is_down_inside = True
             self.drag_start_x = event.x_root
@@ -883,64 +738,21 @@ class QuotaApp:
                 self.config["pos_y"] = self.root.winfo_y()
                 save_config(self.config)
 
-        for w in (self.header, self.title_box, self.title_lbl):
-            w.bind("<Button-1>", start_move)
-            w.bind("<B1-Motion>", do_move)
-            w.bind("<ButtonRelease-1>", stop_move)
-            w.bind("<Double-Button-1>", lambda e: self.reset_to_tray())
+        self.canvas.bind("<Button-1>", start_move)
+        self.canvas.bind("<B1-Motion>", do_move)
+        self.canvas.bind("<ButtonRelease-1>", stop_move)
+        self.canvas.bind("<Double-Button-1>", lambda e: self.reset_to_tray())
 
-        # Responsive scaling on resize
-        self.root.bind("<Configure>", self.on_window_configure)
-
-        # Escape key closes window
+        # Escape closes window
         self.root.bind("<Escape>", lambda e: self.hide_window())
-
-    def on_window_configure(self, event):
-        """Dynamically scales font sizes and paddings down when small, capped at clean legible size."""
-        if event.widget != self.root:
-            return
-        
-        w = event.width
-        h = event.height
-        
-        # Apply rounded region dynamically
-        apply_dwm_styling(self.root, w, h)
-        
-        # Proportional scale factor
-        scale = min(1.0, max(0.72, min(w / 380.0, h / 520.0)))
-        
-        # Font sizes with strict caps so they don't blow up or shrink illegibly
-        t_size = max(9, min(12, int(11 * scale)))
-        s_size = max(7, min(9, int(8 * scale)))
-        label_size = max(8, min(10, int(10 * scale)))
-        pct_size = max(10, min(13, int(12 * scale)))
-        rst_size = max(7, min(9, int(8 * scale)))
-        bar_h = max(4, min(8, int(6 * scale)))
-        
-        for card_widgets in (self.gemini_widgets, self.claude_widgets):
-            try:
-                card_widgets["title"].config(font=("Segoe UI", t_size, "bold"))
-                card_widgets["sub"].config(font=("Segoe UI", s_size))
-                card_widgets["5h_title"].config(font=("Segoe UI", label_size, "bold"))
-                card_widgets["5h_pct"].config(font=("Segoe UI", pct_size, "bold"))
-                card_widgets["5h_reset"].config(font=("Segoe UI", rst_size))
-                card_widgets["5h_bar"].set_height(bar_h)
-                card_widgets["w_title"].config(font=("Segoe UI", label_size, "bold"))
-                card_widgets["w_pct"].config(font=("Segoe UI", pct_size, "bold"))
-                card_widgets["w_reset"].config(font=("Segoe UI", rst_size))
-                card_widgets["w_bar"].set_height(bar_h)
-            except Exception:
-                pass
 
     # Reliable check for clicking outside the window (30ms interval)
     def _poll_click_outside(self):
         if self.is_open and not self.pinned:
-            # Under NO circumstance close while dragging, resizing, or when mouse was pressed inside
             if self.is_dragging or self.is_resizing or self.mouse_is_down_inside:
                 self.root.after(30, self._poll_click_outside)
                 return
             
-            # Debounce right after opening
             if time.time() - self.open_timestamp < 0.3:
                 self.root.after(30, self._poll_click_outside)
                 return
@@ -948,7 +760,6 @@ class QuotaApp:
                 self.root.after(30, self._poll_click_outside)
                 return
 
-            # Check mouse button states: 0x01 = VK_LBUTTON, 0x02 = VK_RBUTTON
             l_down = ctypes.windll.user32.GetAsyncKeyState(0x01) & 0x8000
             r_down = ctypes.windll.user32.GetAsyncKeyState(0x02) & 0x8000
             
@@ -960,14 +771,12 @@ class QuotaApp:
                 ww = self.root.winfo_width()
                 wh = self.root.winfo_height()
                 
-                # 20px margin around window bounds ensures all border resize handles are safe
-                margin = 20
+                margin = 25
                 is_inside = (wx - margin <= pt.x <= wx + ww + margin) and (wy - margin <= pt.y <= wy + wh + margin)
                 
                 if is_inside:
                     self.mouse_is_down_inside = True
                 else:
-                    # User clicked outside!
                     self.hide_window()
                     self.root.after(30, self._poll_click_outside)
                     return
@@ -988,25 +797,29 @@ class QuotaApp:
     def _tick_live(self):
         now_ts = time.time()
         
-        # 1. Update countdown labels in real-time down to the second
-        if self.latest_data and self.is_open:
+        # 1. Update live countdown labels in real-time
+        if self.is_open:
             self._update_countdown_labels()
         
-        # 2. Seamless status handling:
-        # Live badge stays ● LIVE as long as data was received in the last 15s.
-        # Only switch to ● OFFLINE if no signal for > 15 seconds!
+        # 2. Check signal freshness
         if self.last_successful_fetch > 0:
             elapsed = now_ts - self.last_successful_fetch
             if elapsed > 15:
-                self.live_badge.config(text="● OFFLINE", fg="#ef4444", bg="#450a0a")
-                self.status_lbl.config(text="No signal (>15s)", fg="#ef4444")
+                try:
+                    self.canvas.itemconfigure("live_badge_bg", fill="#450a0a", outline="#ef4444")
+                    self.canvas.itemconfigure("live_badge_txt", text="● OFFLINE", fill="#ef4444")
+                    self.canvas.itemconfigure("status_txt", text="Kein Signal (>15s)", fill="#ef4444")
+                except Exception:
+                    pass
             else:
-                self.live_badge.config(text="● LIVE", fg="#10b981", bg="#064e3b")
-                self.status_lbl.config(text="Live synchronized", fg="#64748b")
+                try:
+                    self.canvas.itemconfigure("live_badge_bg", fill="#064e3b", outline="#10b981")
+                    self.canvas.itemconfigure("live_badge_txt", text="● LIVE", fill="#10b981")
+                    self.canvas.itemconfigure("status_txt", text="Live synchronisiert", fill="#94a3b8")
+                except Exception:
+                    pass
         
         # 3. Live Auto-Refresh logic:
-        # When window is open: silent background refresh every 10 seconds.
-        # When window is closed: background refresh every 60 seconds.
         interval = self.config.get("live_refresh_seconds", 10) if self.is_open else self.config.get("background_refresh_seconds", 60)
         if not self.is_fetching and (now_ts - self.last_fetch_start >= interval):
             self.trigger_refresh(silent=True)
@@ -1015,33 +828,35 @@ class QuotaApp:
 
     def _update_countdown_labels(self):
         for key, target_info in self.bucket_reset_targets.items():
-            widget = target_info.get("widget")
             target_dt = target_info.get("target_dt")
             fraction = target_info.get("fraction", 1.0)
-            if widget and target_dt:
+            tag_name = target_info.get("tag")
+            if tag_name and target_dt:
                 countdown_text = format_countdown_seconds(target_dt, fraction)
-                widget.config(text=countdown_text)
+                target_info["last_text"] = countdown_text
+                try:
+                    self.canvas.itemconfigure(tag_name, text=countdown_text)
+                except Exception:
+                    pass
 
     def toggle_pin(self):
         self.pinned = not self.pinned
         self.config["pinned"] = self.pinned
         save_config(self.config)
-        self.pin_btn.config(
-            text="📌" if self.pinned else "📍",
-            fg="#38bdf8" if self.pinned else "#64748b"
-        )
+        self.render_glass_ui()
 
     def reset_to_tray(self):
         """Docks the window back above the system tray and restores standard size."""
         self.config["custom_pos"] = False
         self.config["pos_x"] = None
         self.config["pos_y"] = None
-        self.win_width = 380
+        self.win_width = 390
         self.win_height = 520
-        self.config["win_width"] = 380
+        self.config["win_width"] = 390
         self.config["win_height"] = 520
         save_config(self.config)
         self.position_window()
+        self.render_glass_ui()
 
     def position_window(self):
         left, top, right, bottom = get_work_area()
@@ -1054,11 +869,10 @@ class QuotaApp:
             x = right - self.win_width - 12
             y = bottom - self.win_height - 10
         self.root.geometry(f"{self.win_width}x{self.win_height}+{x}+{y}")
-        apply_dwm_styling(self.root, self.win_width, self.win_height)
 
     def show_window(self):
         self.position_window()
-        apply_dwm_styling(self.root, self.win_width, self.win_height)
+        apply_dwm_styling(self.root)
         self.root.deiconify()
         self.root.lift()
         self.root.focus_force()
@@ -1097,9 +911,11 @@ class QuotaApp:
         self.is_fetching = True
         self.last_fetch_start = time.time()
         
-        # Only change refresh button text if user clicked manually
         if not silent:
-            self.refresh_btn.config(text="⌛ Loading...", fg="#94a3b8")
+            try:
+                self.canvas.itemconfigure("btn_refresh", text="⌛ Lade...")
+            except Exception:
+                pass
             
         threading.Thread(target=self._fetch_worker, daemon=True).start()
 
@@ -1109,39 +925,38 @@ class QuotaApp:
 
     def _on_fetch_complete(self, data, err):
         self.is_fetching = False
-        self.refresh_btn.config(text="🔄 Refresh", fg="#f8fafc")
         
         if err or not data:
             if time.time() - self.last_successful_fetch > 15:
-                self.status_lbl.config(text="No signal • Timeout", fg="#ef4444")
-                self.live_badge.config(text="● OFFLINE", fg="#ef4444", bg="#450a0a")
+                try:
+                    self.canvas.itemconfigure("live_badge_bg", fill="#450a0a", outline="#ef4444")
+                    self.canvas.itemconfigure("live_badge_txt", text="● OFFLINE", fill="#ef4444")
+                    self.canvas.itemconfigure("status_txt", text="Kein Signal • Timeout", fill="#ef4444")
+                except Exception:
+                    pass
             print(f"Fetch error: {err}")
             return
         
         self.latest_data = data
         self.last_successful_fetch = time.time()
-        self.status_lbl.config(text="Live synchronized", fg="#64748b")
-        self.live_badge.config(text="● LIVE", fg="#10b981", bg="#064e3b")
         
-        self.update_ui_cards(data)
+        self.update_data_state(data)
+        self.render_glass_ui()
         self.update_tray_state(data)
 
-    def update_ui_cards(self, data):
+    def update_data_state(self, data):
         groups = data.get("groups", [])
         for group in groups:
             g_name = group.get("name", "")
             buckets = group.get("buckets", [])
             
-            target_widgets = None
             group_key = ""
             if "Gemini" in g_name:
-                target_widgets = self.gemini_widgets
                 group_key = "gemini"
             elif "Claude" in g_name or "GPT" in g_name:
-                target_widgets = self.claude_widgets
                 group_key = "claude"
             
-            if not target_widgets:
+            if not group_key:
                 continue
             
             for b in buckets:
@@ -1157,27 +972,24 @@ class QuotaApp:
                     except Exception:
                         pass
                 
-                pct_str = f"{int(round(frac * 100))}%"
-                color = get_color_for_fraction(frac)
+                pct_str = f"{frac * 100:.1f}%"
                 
                 if "5h" in b_id:
-                    target_widgets["5h_pct"].config(text=pct_str, fg=color)
-                    target_widgets["5h_bar"].set_value(frac)
                     self.bucket_reset_targets[f"{group_key}_5h"] = {
-                        "widget": target_widgets["5h_reset"],
+                        "tag": f"{group_key}_5h_rst",
+                        "pct_str": pct_str,
+                        "fraction": frac,
                         "target_dt": target_dt,
-                        "fraction": frac
+                        "last_text": format_countdown_seconds(target_dt, frac)
                     }
-                    target_widgets["5h_reset"].config(text=format_countdown_seconds(target_dt, frac))
                 elif "weekly" in b_id:
-                    target_widgets["w_pct"].config(text=pct_str, fg=color)
-                    target_widgets["w_bar"].set_value(frac)
                     self.bucket_reset_targets[f"{group_key}_weekly"] = {
-                        "widget": target_widgets["w_reset"],
+                        "tag": f"{group_key}_w_rst",
+                        "pct_str": pct_str,
+                        "fraction": frac,
                         "target_dt": target_dt,
-                        "fraction": frac
+                        "last_text": format_countdown_seconds(target_dt, frac)
                     }
-                    target_widgets["w_reset"].config(text=format_countdown_seconds(target_dt, frac))
 
     def update_tray_state(self, data):
         if not self.tray_icon:
@@ -1194,16 +1006,16 @@ class QuotaApp:
         new_icon_img = create_tray_image(min_frac)
         self.tray_icon.icon = new_icon_img
 
-    # Tray Menu (Right-Click Menu, while Left-Click opens/closes flyout)
+    # Tray Menu (Right-Click Menu)
     def create_tray_menu(self):
         menu_items = [
-            item("Open Dashboard", lambda *a: self.post(self.toggle_window), default=True),
-            item("Refresh Now", lambda *a: self.post(lambda: self.trigger_refresh(silent=False))),
-            item("Dock to Tray (Reset Position)", lambda *a: self.post(self.reset_to_tray)),
+            item("📊 Dashboard öffnen", lambda *a: self.post(self.toggle_window), default=True),
+            item("🔄 Jetzt live aktualisieren", lambda *a: self.post(lambda: self.trigger_refresh(silent=False))),
+            item("📍 An Taskleiste andocken (Reset)", lambda *a: self.post(self.reset_to_tray)),
             Menu.SEPARATOR,
-            item("Start with Windows", self.toggle_autostart, checked=lambda item: is_autostart_enabled()),
+            item("🚀 Autostart mit Windows", self.toggle_autostart, checked=lambda item: is_autostart_enabled()),
             Menu.SEPARATOR,
-            item("Exit", lambda *a: self.post(self.quit_app))
+            item("❌ Beenden", lambda *a: self.post(self.quit_app))
         ]
         return Menu(*menu_items)
 
@@ -1266,18 +1078,18 @@ def main():
         ok = check_single_instance()
         if not ok:
             with open(os.path.join(APP_DIR, "agy_tray.log"), "a", encoding="utf-8") as f:
-                f.write(f"[{datetime.now().isoformat()}] Another instance is already active.\n")
+                f.write(f"[{datetime.now().isoformat()}] Bereits eine Instanz aktiv.\n")
             sys.exit(0)
         
         with open(os.path.join(APP_DIR, "agy_tray.log"), "a", encoding="utf-8") as f:
-            f.write(f"[{datetime.now().isoformat()}] Starting application...\n")
+            f.write(f"[{datetime.now().isoformat()}] App wird gestartet...\n")
             
         app = QuotaApp()
         app.run()
     except Exception as e:
         import traceback
         with open(os.path.join(APP_DIR, "agy_tray.log"), "a", encoding="utf-8") as f:
-            f.write(f"[{datetime.now().isoformat()}] Error:\n{traceback.format_exc()}\n")
+            f.write(f"[{datetime.now().isoformat()}] Fehler:\n{traceback.format_exc()}\n")
 
 if __name__ == "__main__":
     main()
