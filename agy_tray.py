@@ -1,8 +1,9 @@
 """
 Antigravity Quota Monitor - Windows System Tray Utility
 Monitors API limits and quotas for Gemini and Claude/GPT model groups in real-time.
-Built with PyQt5 for native Windows 11 frosted acrylic glass, smooth anti-aliased
-rounded corners (radius 26px), seamless non-client edge resizing, and responsive content scaling.
+Built with PyQt5 for native Windows 11 frosted acrylic glass, high-end vector glass icons,
+Windows 11 Fluent 2 typography (Segoe UI Variable), seamless non-client edge resizing,
+and responsive content scaling.
 """
 
 import os
@@ -35,8 +36,12 @@ import winreg
 from datetime import datetime, timezone
 import subprocess
 
-from PyQt5.QtCore import Qt, QTimer, QPoint, QPointF, QRectF, QSize, pyqtSignal, QObject, QEvent
-from PyQt5.QtGui import QPainter, QColor, QPainterPath, QPen, QFont, QIcon, QPixmap, QLinearGradient
+from PyQt5.QtCore import Qt, QTimer, QPoint, QPointF, QRectF, QSize, QByteArray, pyqtSignal, QObject, QEvent
+from PyQt5.QtGui import (
+    QPainter, QColor, QPainterPath, QPen, QFont, QIcon, QPixmap,
+    QLinearGradient, QRadialGradient, QBrush
+)
+from PyQt5.QtSvg import QSvgRenderer
 from PyQt5.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QPushButton, QProgressBar, QFrame, QScrollArea, QSystemTrayIcon,
@@ -94,8 +99,8 @@ def apply_acrylic_glass(hwnd):
         accent = ACCENT_POLICY()
         accent.AccentState = 4  # ACCENT_ENABLE_ACRYLICBLURBEHIND
         accent.AccentFlags = 2
-        # Transparent acrylic blur with very light dark tint (0x22 alpha)
-        accent.GradientColor = 0x22101622
+        # Transparent acrylic blur with ultra-light dark tint (0x20 alpha)
+        accent.GradientColor = 0x20101624
         accent.AnimationId = 0
 
         data = WINDOWCOMPOSITIONATTRIBDATA()
@@ -120,8 +125,8 @@ DEFAULT_CONFIG = {
     "background_refresh_seconds": 60,
     "live_refresh_seconds": 10,
     "pinned": False,
-    "win_width": 370,
-    "win_height": 490,
+    "win_width": 380,
+    "win_height": 535,
     "pos_x": None,
     "pos_y": None
 }
@@ -214,7 +219,7 @@ def create_tray_pixmap(min_fraction=1.0):
     painter.drawArc(5, 5, 54, 54, 90 * 16, -span_angle)
 
     # Center text "AG"
-    font = QFont("Segoe UI", 16, QFont.Bold)
+    font = QFont("Segoe UI Variable Display", 16, QFont.Bold)
     painter.setFont(font)
     painter.setPen(QColor(255, 255, 255))
     painter.drawText(QRectF(0, 1, size, size), Qt.AlignCenter, "AG")
@@ -222,7 +227,7 @@ def create_tray_pixmap(min_fraction=1.0):
     painter.end()
     return pixmap
 
-# Helper to format countdown matching reference design
+# Helper to format countdown
 def format_ref_countdown(reset_time_str):
     if not reset_time_str:
         return "100% available"
@@ -248,261 +253,413 @@ def format_ref_countdown(reset_time_str):
     except Exception:
         return reset_time_str
 
-# ----------------- TOP-TIER VECTOR ICONS -----------------
+# ----------------- HIGH-QUALITY VECTOR ICONS -----------------
 
-def create_pin_icon(pinned=False, color=QColor(226, 232, 240), size=24):
-    """Vector pushpin icon matching reference screenshot."""
-    pix = QPixmap(size, size)
+SVG_GEMINI = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none">
+<path d="M12 1.5C12 7.3 7.3 12 1.5 12C7.3 12 12 16.7 12 22.5C12 16.7 16.7 12 22.5 12C16.7 12 12 7.3 12 1.5Z" fill="url(#geminiGrad)" />
+<defs>
+<linearGradient id="geminiGrad" x1="1.5" y1="1.5" x2="22.5" y2="22.5" gradientUnits="userSpaceOnUse">
+<stop offset="0%" stop-color="#38BDF8"/>
+<stop offset="50%" stop-color="#818CF8"/>
+<stop offset="100%" stop-color="#C084FC"/>
+</linearGradient>
+</defs>
+</svg>"""
+
+SVG_CLAUDE = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none">
+<path d="M12 2L13.9 8.2L20.2 6.5L16.2 11.5L21.8 14L15.7 16.1L17.7 22.2L12 18.1L6.3 22.2L8.3 16.1L2.2 14L7.8 11.5L3.8 6.5L10.1 8.2L12 2Z" fill="url(#claudeGrad)"/>
+<defs>
+<linearGradient id="claudeGrad" x1="2" y1="2" x2="22" y2="22" gradientUnits="userSpaceOnUse">
+<stop offset="0%" stop-color="#FB923C"/>
+<stop offset="50%" stop-color="#F43F5E"/>
+<stop offset="100%" stop-color="#E11D48"/>
+</linearGradient>
+</defs>
+</svg>"""
+
+SVG_CLOCK = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#94A3B8" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+<circle cx="12" cy="12" r="9"/>
+<polyline points="12 7 12 12 15 14"/>
+</svg>"""
+
+SVG_CALENDAR = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#94A3B8" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+<rect width="18" height="18" x="3" y="4" rx="3.5"/>
+<line x1="16" x2="16" y1="2" y2="5"/>
+<line x1="8" x2="8" y1="2" y2="5"/>
+<line x1="3" x2="21" y1="9" y2="9"/>
+</svg>"""
+
+SVG_PIN_ON = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#38BDF8" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+<line x1="12" x2="12" y1="17" y2="22"/>
+<path d="M5 17h14v-1.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V6h1a2 2 0 0 0 0-4H8a2 2 0 0 0 0 4h1v4.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24Z"/>
+</svg>"""
+
+SVG_PIN_OFF = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#CBD5E1" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+<line x1="2" x2="22" y1="2" y2="22"/>
+<path d="M9 9v1.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V17h12"/>
+<path d="M15 9.34V6h1a2 2 0 0 0 0-4H7.89"/>
+<line x1="12" x2="12" y1="17" y2="22"/>
+</svg>"""
+
+SVG_CLOSE = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#CBD5E1" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+<line x1="18" y1="6" x2="6" y2="18"/>
+<line x1="6" y1="6" x2="18" y2="18"/>
+</svg>"""
+
+SVG_REFRESH = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#CBD5E1" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+<path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"/>
+<path d="M21 3v5h-5"/>
+</svg>"""
+
+SVG_EXTERNAL = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#CBD5E1" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+<path d="M15 3h6v6"/>
+<path d="M10 14 21 3"/>
+<path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>
+</svg>"""
+
+def render_svg_to_pixmap(svg_str, width, height):
+    renderer = QSvgRenderer(QByteArray(svg_str.encode('utf-8')))
+    pix = QPixmap(width, height)
     pix.fill(Qt.transparent)
     p = QPainter(pix)
     p.setRenderHint(QPainter.Antialiasing)
-
-    pen = QPen(color, 1.7)
-    pen.setCapStyle(Qt.RoundCap)
-    pen.setJoinStyle(Qt.RoundJoin)
-    p.setPen(pen)
-
-    p.save()
-    p.translate(size / 2.0, size / 2.0)
-    p.rotate(-45)
-
-    # Pin head
-    p.drawLine(QPointF(-4.5, -6.0), QPointF(4.5, -6.0))
-    # Tapered body
-    p.drawLine(QPointF(-3.0, -6.0), QPointF(-2.0, -1.0))
-    p.drawLine(QPointF(3.0, -6.0), QPointF(2.0, -1.0))
-    # Collar
-    p.drawLine(QPointF(-5.0, -1.0), QPointF(5.0, -1.0))
-    # Needle
-    p.drawLine(QPointF(0.0, -1.0), QPointF(0.0, 6.5))
-    p.restore()
-
-    if not pinned:
-        # Diagonal slash line matching reference screenshot (white/silver)
-        pen_slash = QPen(color, 1.7)
-        pen_slash.setCapStyle(Qt.RoundCap)
-        p.setPen(pen_slash)
-        p.drawLine(QPointF(4.5, 4.5), QPointF(size - 4.5, size - 4.5))
-
+    p.setRenderHint(QPainter.SmoothPixmapTransform)
+    renderer.render(p)
     p.end()
-    return QIcon(pix)
+    return pix
 
-def create_close_icon(color=QColor(226, 232, 240), size=24):
-    """Vector X icon matching reference screenshot."""
+# ----------------- GLASS-STYLE ICON & MEDALLION RENDERERS -----------------
+
+def create_glass_brand_medallion(svg_str, size=30, icon_size=17, glow_color="#38bdf8"):
+    """Creates a frosted glass medallion capsule for brand logos."""
     pix = QPixmap(size, size)
     pix.fill(Qt.transparent)
     p = QPainter(pix)
     p.setRenderHint(QPainter.Antialiasing)
+    p.setRenderHint(QPainter.SmoothPixmapTransform)
 
-    pen = QPen(color, 1.8)
-    pen.setCapStyle(Qt.RoundCap)
-    p.setPen(pen)
+    rect = QRectF(1.0, 1.0, size - 2.0, size - 2.0)
+    radius = (size - 2.0) / 2.0
 
-    m = 7.0
-    p.drawLine(QPointF(m, m), QPointF(size - m, size - m))
-    p.drawLine(QPointF(size - m, m), QPointF(m, size - m))
-    p.end()
-    return QIcon(pix)
-
-def create_refresh_icon(color=QColor(226, 232, 240), size=24):
-    """Dual-arrow circular refresh icon matching Lucide rotate-cw."""
-    pix = QPixmap(size, size)
-    pix.fill(Qt.transparent)
-    p = QPainter(pix)
-    p.setRenderHint(QPainter.Antialiasing)
-
-    pen = QPen(color, 1.7)
-    pen.setCapStyle(Qt.RoundCap)
-    pen.setJoinStyle(Qt.RoundJoin)
-    p.setPen(pen)
-
-    cx, cy = size / 2.0, size / 2.0
-    r = 6.2
-
-    rect = QRectF(cx - r, cy - r, r * 2.0, r * 2.0)
-    p.drawArc(rect, 25 * 16, 130 * 16)
-
-    rad1 = math.radians(25)
-    x1 = cx + r * math.cos(rad1)
-    y1 = cy - r * math.sin(rad1)
-    p.drawLine(QPointF(x1, y1), QPointF(x1 + 3.0, y1 + 0.5))
-    p.drawLine(QPointF(x1, y1), QPointF(x1 + 0.5, y1 - 3.0))
-
-    p.drawArc(rect, 205 * 16, 130 * 16)
-
-    rad2 = math.radians(205)
-    x2 = cx + r * math.cos(rad2)
-    y2 = cy - r * math.sin(rad2)
-    p.drawLine(QPointF(x2, y2), QPointF(x2 - 3.0, y2 - 0.5))
-    p.drawLine(QPointF(x2, y2), QPointF(x2 - 0.5, y2 + 3.0))
-
-    p.end()
-    return QIcon(pix)
-
-def create_external_icon(color=QColor(226, 232, 240), size=24):
-    """External link icon matching reference screenshot."""
-    pix = QPixmap(size, size)
-    pix.fill(Qt.transparent)
-    p = QPainter(pix)
-    p.setRenderHint(QPainter.Antialiasing)
-
-    pen = QPen(color, 1.7)
-    pen.setCapStyle(Qt.RoundCap)
-    pen.setJoinStyle(Qt.RoundJoin)
-    p.setPen(pen)
-
-    # Box with top-right opening
-    path = QPainterPath()
-    path.moveTo(QPointF(13.0, 7.0))
-    path.lineTo(QPointF(7.0, 7.0))
-    path.lineTo(QPointF(7.0, 17.0))
-    path.lineTo(QPointF(17.0, 17.0))
-    path.lineTo(QPointF(17.0, 11.0))
-    p.drawPath(path)
-
-    # Arrow pointing up-right
-    p.drawLine(QPointF(11.0, 13.0), QPointF(17.0, 7.0))
-    p.drawLine(QPointF(13.0, 7.0), QPointF(17.0, 7.0))
-    p.drawLine(QPointF(17.0, 7.0), QPointF(17.0, 11.0))
-
-    p.end()
-    return QIcon(pix)
-
-def create_antigravity_logo(size=28):
-    """Sleek minimalist Antigravity logo glyph."""
-    pix = QPixmap(size, size)
-    pix.fill(Qt.transparent)
-    p = QPainter(pix)
-    p.setRenderHint(QPainter.Antialiasing)
-
-    cx, cy = size / 2.0, size / 2.0
-
-    # Geometric floating orbital triangle / glyph
-    pen = QPen(QColor(255, 255, 255, 230), 1.8)
-    pen.setCapStyle(Qt.RoundCap)
-    pen.setJoinStyle(Qt.RoundJoin)
-    p.setPen(pen)
-
-    path = QPainterPath()
-    path.moveTo(cx, cy + 8.0)
-    path.lineTo(cx - 7.5, cy - 5.0)
-    path.lineTo(cx + 7.5, cy - 5.0)
-    path.closeSubpath()
-    p.drawPath(path)
-
-    # Inner glowing core
+    # Backlight ambient glow
+    glow = QColor(glow_color)
+    glow.setAlpha(35)
     p.setPen(Qt.NoPen)
-    p.setBrush(QColor(56, 189, 248, 230))
-    p.drawEllipse(QPointF(cx, cy - 0.5), 2.5, 2.5)
+    p.setBrush(glow)
+    p.drawRoundedRect(rect, radius, radius)
+
+    # Frosted glass background
+    bg_grad = QLinearGradient(0, 0, 0, size)
+    bg_grad.setColorAt(0.0, QColor(255, 255, 255, 32))
+    bg_grad.setColorAt(1.0, QColor(255, 255, 255, 8))
+    p.setBrush(bg_grad)
+    p.drawRoundedRect(rect, radius, radius)
+
+    # Top specular reflection highlight
+    shine = QLinearGradient(0, 0, 0, size * 0.55)
+    shine.setColorAt(0.0, QColor(255, 255, 255, 60))
+    shine.setColorAt(1.0, QColor(255, 255, 255, 0))
+    p.setBrush(shine)
+    p.drawRoundedRect(rect, radius, radius)
+
+    # Glass rim border
+    rim_grad = QLinearGradient(0, 0, 0, size)
+    rim_grad.setColorAt(0.0, QColor(255, 255, 255, 110))
+    rim_grad.setColorAt(0.5, QColor(255, 255, 255, 30))
+    rim_grad.setColorAt(1.0, QColor(255, 255, 255, 15))
+    p.setPen(QPen(rim_grad, 1.0))
+    p.setBrush(Qt.NoBrush)
+    p.drawRoundedRect(rect, radius, radius)
+
+    # Render inner SVG glyph
+    offset = (size - icon_size) / 2.0
+    renderer = QSvgRenderer(QByteArray(svg_str.encode('utf-8')))
+    renderer.render(p, QRectF(offset, offset, icon_size, icon_size))
 
     p.end()
     return pix
 
-# ----------------- GLASS QUOTA CARD -----------------
+def create_glass_icon_pixmap(svg_str, size=32, inner_size=16, is_hover=False, is_active=False):
+    """Creates a high-end glassmorphic interactive button icon."""
+    pix = QPixmap(size, size)
+    pix.fill(Qt.transparent)
+    p = QPainter(pix)
+    p.setRenderHint(QPainter.Antialiasing)
+    p.setRenderHint(QPainter.SmoothPixmapTransform)
 
-class GlassQuotaCard(QFrame):
-    def __init__(self, group_name, badge_text, badge_color="#38bdf8", parent=None):
+    rect = QRectF(1.0, 1.0, size - 2.0, size - 2.0)
+    radius = (size - 2.0) / 2.0
+
+    if is_active:
+        bg_color = QColor(56, 189, 248, 55)
+        border_top = QColor(56, 189, 248, 160)
+        border_bot = QColor(56, 189, 248, 60)
+    elif is_hover:
+        bg_color = QColor(255, 255, 255, 38)
+        border_top = QColor(255, 255, 255, 120)
+        border_bot = QColor(255, 255, 255, 35)
+    else:
+        bg_color = QColor(255, 255, 255, 16)
+        border_top = QColor(255, 255, 255, 65)
+        border_bot = QColor(255, 255, 255, 18)
+
+    # Glass disc
+    p.setPen(Qt.NoPen)
+    p.setBrush(bg_color)
+    p.drawRoundedRect(rect, radius, radius)
+
+    # Upper specular curve
+    grad_shine = QLinearGradient(0, 0, 0, size * 0.6)
+    grad_shine.setColorAt(0.0, QColor(255, 255, 255, 45 if not is_hover else 75))
+    grad_shine.setColorAt(1.0, QColor(255, 255, 255, 0))
+    p.setBrush(grad_shine)
+    p.drawRoundedRect(rect, radius, radius)
+
+    # Glass rim
+    grad_border = QLinearGradient(0, 0, 0, size)
+    grad_border.setColorAt(0.0, border_top)
+    grad_border.setColorAt(1.0, border_bot)
+    pen = QPen(grad_border, 1.0)
+    p.setPen(pen)
+    p.setBrush(Qt.NoBrush)
+    p.drawRoundedRect(rect, radius, radius)
+
+    # Render glyph inside
+    offset = (size - inner_size) / 2.0
+    renderer = QSvgRenderer(QByteArray(svg_str.encode('utf-8')))
+    renderer.render(p, QRectF(offset, offset, inner_size, inner_size))
+
+    p.end()
+    return pix
+
+def create_antigravity_glass_logo(size=32):
+    """Creates the Antigravity levitating glass prism orb."""
+    pix = QPixmap(size, size)
+    pix.fill(Qt.transparent)
+    p = QPainter(pix)
+    p.setRenderHint(QPainter.Antialiasing)
+    p.setRenderHint(QPainter.SmoothPixmapTransform)
+
+    rect = QRectF(1.0, 1.0, size - 2.0, size - 2.0)
+    radius = (size - 2.0) / 2.0
+
+    # Glass orb gradient fill
+    grad_bg = QLinearGradient(0, 0, size, size)
+    grad_bg.setColorAt(0.0, QColor(56, 189, 248, 50))
+    grad_bg.setColorAt(0.7, QColor(99, 102, 241, 35))
+    grad_bg.setColorAt(1.0, QColor(168, 85, 247, 20))
+    p.setPen(Qt.NoPen)
+    p.setBrush(grad_bg)
+    p.drawRoundedRect(rect, radius, radius)
+
+    # Top specular glass shine
+    grad_shine = QLinearGradient(0, 0, 0, size * 0.55)
+    grad_shine.setColorAt(0.0, QColor(255, 255, 255, 60))
+    grad_shine.setColorAt(1.0, QColor(255, 255, 255, 0))
+    p.setBrush(grad_shine)
+    p.drawRoundedRect(rect, radius, radius)
+
+    # Specular rim
+    pen_rim = QPen(QColor(255, 255, 255, 90), 1.0)
+    p.setPen(pen_rim)
+    p.setBrush(Qt.NoBrush)
+    p.drawRoundedRect(rect, radius, radius)
+
+    # Inner Antigravity Delta Glyph
+    cx, cy = size / 2.0, size / 2.0
+    pen_glyph = QPen(QColor(255, 255, 255, 250), 1.8)
+    pen_glyph.setCapStyle(Qt.RoundCap)
+    pen_glyph.setJoinStyle(Qt.RoundJoin)
+    p.setPen(pen_glyph)
+
+    path = QPainterPath()
+    path.moveTo(cx, cy + 6.8)
+    path.lineTo(cx - 6.2, cy - 4.2)
+    path.lineTo(cx + 6.2, cy - 4.2)
+    path.closeSubpath()
+    p.drawPath(path)
+
+    # Core levitating orb
+    p.setPen(Qt.NoPen)
+    p.setBrush(QColor(56, 189, 248, 255))
+    p.drawEllipse(QPointF(cx, cy - 0.5), 2.2, 2.2)
+
+    p.end()
+    return pix
+
+# ----------------- CUSTOM GLASS BUTTON -----------------
+
+class GlassButton(QPushButton):
+    def __init__(self, svg_str, size=32, inner_size=16, is_active=False, parent=None):
         super().__init__(parent)
-        self.setObjectName("glassCard")
+        self.svg_str = svg_str
+        self.btn_size = size
+        self.inner_size = inner_size
+        self.is_active = is_active
+        self.setFixedSize(size, size)
+        self.setCursor(Qt.PointingHandCursor)
+        self.update_icons()
+
+    def set_svg(self, svg_str, is_active=False):
+        self.svg_str = svg_str
+        self.is_active = is_active
+        self.update_icons()
+
+    def update_icons(self):
+        icon = QIcon()
+        pix_normal = create_glass_icon_pixmap(self.svg_str, self.btn_size, self.inner_size, False, self.is_active)
+        pix_hover = create_glass_icon_pixmap(self.svg_str, self.btn_size, self.inner_size, True, self.is_active)
+        icon.addPixmap(pix_normal, QIcon.Normal)
+        icon.addPixmap(pix_hover, QIcon.Active)
+        self.setIcon(icon)
+        self.setIconSize(QSize(self.btn_size, self.btn_size))
+        self.setStyleSheet("QPushButton { background: transparent; border: none; padding: 0px; }")
+
+# ----------------- HIGH-END GLASS QUOTA CARD -----------------
+
+class PremiumGlassQuotaCard(QFrame):
+    def __init__(self, group_name, badge_text, brand_svg, accent_color="#38bdf8", parent=None):
+        super().__init__(parent)
+        self.setObjectName("premiumGlassCard")
         self.setStyleSheet("""
-            #glassCard {
-                background: rgba(0, 0, 0, 0.18);
-                border: 1px solid rgba(255, 255, 255, 0.08);
-                border-radius: 16px;
+            #premiumGlassCard {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1, 
+                    stop:0 rgba(255, 255, 255, 0.08), 
+                    stop:0.1 rgba(255, 255, 255, 0.02), 
+                    stop:1 rgba(0, 0, 0, 0.22));
+                border: 1px solid rgba(255, 255, 255, 0.09);
+                border-top: 1px solid rgba(255, 255, 255, 0.24);
+                border-radius: 20px;
             }
         """)
         self.layout = QVBoxLayout(self)
-        self.layout.setContentsMargins(16, 13, 16, 14)
-        self.layout.setSpacing(8)
+        self.layout.setContentsMargins(18, 16, 18, 16)
+        self.layout.setSpacing(10)
 
-        # Header Row: [Title]   [Badge]
+        # Header Row: [Glass Medallion] Title      [Glass Badge]
         self.hdr = QHBoxLayout()
-        self.hdr.setSpacing(8)
+        self.hdr.setSpacing(10)
+
+        self.brand_icon = QLabel()
+        self.brand_icon.setFixedSize(30, 30)
+        self.brand_icon.setPixmap(create_glass_brand_medallion(brand_svg, 30, 17, accent_color))
+        self.hdr.addWidget(self.brand_icon)
 
         self.title = QLabel(group_name)
-        self.title.setFont(QFont("Segoe UI", 11, QFont.Bold))
-        self.title.setStyleSheet("color: #ffffff; letter-spacing: 0.2px;")
+        self.title.setFont(QFont("Segoe UI Variable Display", 11, QFont.Bold))
+        self.title.setStyleSheet("color: #ffffff;")
         self.hdr.addWidget(self.title)
 
         self.hdr.addStretch()
 
         self.badge = QLabel(badge_text)
-        self.badge.setFont(QFont("Segoe UI", 8, QFont.Bold))
+        self.badge.setFont(QFont("Segoe UI Variable Small", 8, QFont.Bold))
         self.badge.setStyleSheet(f"""
-            background: rgba(255, 255, 255, 0.06);
-            color: {badge_color};
-            border: 1px solid rgba(255, 255, 255, 0.10);
-            padding: 2px 8px;
-            border-radius: 9px;
+            background: qlineargradient(x1:0, y1:0, x2:0, y2:1, 
+                stop:0 rgba(255, 255, 255, 0.09), 
+                stop:1 rgba(255, 255, 255, 0.03));
+            color: {accent_color};
+            border: 1px solid rgba(255, 255, 255, 0.12);
+            border-top: 1px solid rgba(255, 255, 255, 0.25);
+            padding: 4px 10px;
+            border-radius: 11px;
         """)
         self.hdr.addWidget(self.badge)
         self.layout.addLayout(self.hdr)
 
-        # 5h Metric Section
+        self.layout.addSpacing(2)
+
+        # 5h Metric Row
         self.r_5h = QHBoxLayout()
-        self.lbl_5h = QLabel("5h")
-        self.lbl_5h.setFont(QFont("Segoe UI", 10, QFont.Bold))
-        self.lbl_5h.setStyleSheet("color: #ffffff;")
-        self.val_5h = QLabel("--%")
-        self.val_5h.setFont(QFont("Segoe UI", 11, QFont.Bold))
-        self.val_5h.setStyleSheet("color: #34d399;")
+        self.r_5h.setSpacing(7)
+
+        self.icon_5h = QLabel()
+        self.icon_5h.setFixedSize(14, 14)
+        self.icon_5h.setPixmap(render_svg_to_pixmap(SVG_CLOCK, 14, 14))
+        self.r_5h.addWidget(self.icon_5h)
+
+        self.lbl_5h = QLabel("5h Window")
+        self.lbl_5h.setFont(QFont("Segoe UI Variable Text", 9, QFont.DemiBold))
+        self.lbl_5h.setStyleSheet("color: rgba(255, 255, 255, 0.85);")
         self.r_5h.addWidget(self.lbl_5h)
+
         self.r_5h.addStretch()
+
+        self.val_5h = QLabel("--%")
+        self.val_5h.setFont(QFont("Segoe UI Variable Display", 11, QFont.Bold))
+        self.val_5h.setStyleSheet("color: #34d399;")
         self.r_5h.addWidget(self.val_5h)
         self.layout.addLayout(self.r_5h)
 
+        # Neon Gradient Progress Bar
         self.bar_5h = QProgressBar()
-        self.bar_5h.setFixedHeight(4)
+        self.bar_5h.setFixedHeight(5)
         self.bar_5h.setTextVisible(False)
         self.bar_5h.setValue(100)
-        self.set_bar_color(self.bar_5h, "#34d399")
+        self.set_neon_bar(self.bar_5h, 1.0)
         self.layout.addWidget(self.bar_5h)
 
         self.time_5h = QLabel("Loading...")
-        self.time_5h.setFont(QFont("Segoe UI", 8))
-        self.time_5h.setStyleSheet("color: rgba(255, 255, 255, 0.50);")
+        self.time_5h.setFont(QFont("Segoe UI Variable Small", 8))
+        self.time_5h.setStyleSheet("color: rgba(255, 255, 255, 0.48); margin-left: 2px;")
         self.layout.addWidget(self.time_5h)
 
-        self.layout.addSpacing(4)
+        self.layout.addSpacing(6)
 
-        # Weekly Metric Section
+        # Weekly Metric Row
         self.r_wk = QHBoxLayout()
-        self.lbl_wk = QLabel("Weekly")
-        self.lbl_wk.setFont(QFont("Segoe UI", 10, QFont.Bold))
-        self.lbl_wk.setStyleSheet("color: #ffffff;")
-        self.val_wk = QLabel("--%")
-        self.val_wk.setFont(QFont("Segoe UI", 11, QFont.Bold))
-        self.val_wk.setStyleSheet("color: #34d399;")
+        self.r_wk.setSpacing(7)
+
+        self.icon_wk = QLabel()
+        self.icon_wk.setFixedSize(14, 14)
+        self.icon_wk.setPixmap(render_svg_to_pixmap(SVG_CALENDAR, 14, 14))
+        self.r_wk.addWidget(self.icon_wk)
+
+        self.lbl_wk = QLabel("Weekly Limit")
+        self.lbl_wk.setFont(QFont("Segoe UI Variable Text", 9, QFont.DemiBold))
+        self.lbl_wk.setStyleSheet("color: rgba(255, 255, 255, 0.85);")
         self.r_wk.addWidget(self.lbl_wk)
+
         self.r_wk.addStretch()
+
+        self.val_wk = QLabel("--%")
+        self.val_wk.setFont(QFont("Segoe UI Variable Display", 11, QFont.Bold))
+        self.val_wk.setStyleSheet("color: #34d399;")
         self.r_wk.addWidget(self.val_wk)
         self.layout.addLayout(self.r_wk)
 
         self.bar_wk = QProgressBar()
-        self.bar_wk.setFixedHeight(4)
+        self.bar_wk.setFixedHeight(5)
         self.bar_wk.setTextVisible(False)
         self.bar_wk.setValue(100)
-        self.set_bar_color(self.bar_wk, "#34d399")
+        self.set_neon_bar(self.bar_wk, 1.0)
         self.layout.addWidget(self.bar_wk)
 
         self.time_wk = QLabel("Loading...")
-        self.time_wk.setFont(QFont("Segoe UI", 8))
-        self.time_wk.setStyleSheet("color: rgba(255, 255, 255, 0.50);")
+        self.time_wk.setFont(QFont("Segoe UI Variable Small", 8))
+        self.time_wk.setStyleSheet("color: rgba(255, 255, 255, 0.48); margin-left: 2px;")
         self.layout.addWidget(self.time_wk)
 
         self.bucket_5h_reset = None
         self.bucket_wk_reset = None
 
-    def set_bar_color(self, bar, hex_color):
+    def set_neon_bar(self, bar, frac):
+        if frac > 0.5:
+            grad = "qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #059669, stop:0.5 #10b981, stop:1 #34d399)"
+        elif frac > 0.2:
+            grad = "qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #d97706, stop:0.5 #f59e0b, stop:1 #fbbf24)"
+        else:
+            grad = "qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #dc2626, stop:0.5 #ef4444, stop:1 #f87171)"
+
         bar.setStyleSheet(f"""
             QProgressBar {{
-                background: rgba(255, 255, 255, 0.10);
-                border-radius: 2px;
-                border: none;
+                background: rgba(0, 0, 0, 0.35);
+                border: 1px solid rgba(255, 255, 255, 0.06);
+                border-radius: 2.5px;
             }}
             QProgressBar::chunk {{
-                background: {hex_color};
-                border-radius: 2px;
+                background: {grad};
+                border-radius: 2.5px;
             }}
         """)
 
@@ -514,7 +671,7 @@ class GlassQuotaCard(QFrame):
             self.bar_5h.setValue(pct)
             color = "#34d399" if frac > 0.5 else ("#fbbf24" if frac > 0.2 else "#f87171")
             self.val_5h.setStyleSheet(f"color: {color}; font-weight: bold;")
-            self.set_bar_color(self.bar_5h, color)
+            self.set_neon_bar(self.bar_5h, frac)
             self.bucket_5h_reset = b_5h.get("reset_time")
             self.time_5h.setText(format_ref_countdown(self.bucket_5h_reset))
 
@@ -525,7 +682,7 @@ class GlassQuotaCard(QFrame):
             self.bar_wk.setValue(pct)
             color = "#34d399" if frac > 0.5 else ("#fbbf24" if frac > 0.2 else "#f87171")
             self.val_wk.setStyleSheet(f"color: {color}; font-weight: bold;")
-            self.set_bar_color(self.bar_wk, color)
+            self.set_neon_bar(self.bar_wk, frac)
             self.bucket_wk_reset = b_wk.get("reset_time")
             self.time_wk.setText(format_ref_countdown(self.bucket_wk_reset))
 
@@ -536,27 +693,27 @@ class GlassQuotaCard(QFrame):
             self.time_wk.setText(format_ref_countdown(self.bucket_wk_reset))
 
     def update_scaling(self, scale):
-        pad_h = int(16 * scale)
-        pad_v = int(12 * scale)
-        spacing = int(8 * scale)
+        pad_h = max(14, int(18 * scale))
+        pad_v = max(12, int(16 * scale))
+        spacing = max(7, int(10 * scale))
         self.layout.setContentsMargins(pad_h, pad_v, pad_h, pad_v)
         self.layout.setSpacing(spacing)
 
         t_pt = max(9, int(11 * scale))
-        self.title.setFont(QFont("Segoe UI", t_pt, QFont.Bold))
+        self.title.setFont(QFont("Segoe UI Variable Display", t_pt, QFont.Bold))
 
-        lbl_pt = max(8, int(10 * scale))
+        lbl_pt = max(8, int(9 * scale))
         val_pt = max(9, int(11 * scale))
-        self.lbl_5h.setFont(QFont("Segoe UI", lbl_pt, QFont.Bold))
-        self.lbl_wk.setFont(QFont("Segoe UI", lbl_pt, QFont.Bold))
-        self.val_5h.setFont(QFont("Segoe UI", val_pt, QFont.Bold))
-        self.val_wk.setFont(QFont("Segoe UI", val_pt, QFont.Bold))
+        self.lbl_5h.setFont(QFont("Segoe UI Variable Text", lbl_pt, QFont.DemiBold))
+        self.lbl_wk.setFont(QFont("Segoe UI Variable Text", lbl_pt, QFont.DemiBold))
+        self.val_5h.setFont(QFont("Segoe UI Variable Display", val_pt, QFont.Bold))
+        self.val_wk.setFont(QFont("Segoe UI Variable Display", val_pt, QFont.Bold))
 
         time_pt = max(7, int(8 * scale))
-        self.time_5h.setFont(QFont("Segoe UI", time_pt))
-        self.time_wk.setFont(QFont("Segoe UI", time_pt))
+        self.time_5h.setFont(QFont("Segoe UI Variable Small", time_pt))
+        self.time_wk.setFont(QFont("Segoe UI Variable Small", time_pt))
 
-        bar_h = max(3, int(4 * scale))
+        bar_h = max(4, int(5 * scale))
         self.bar_5h.setFixedHeight(bar_h)
         self.bar_wk.setFixedHeight(bar_h)
 
@@ -577,10 +734,10 @@ class GlassWindow(QWidget):
         self.setWindowTitle("Antigravity Quota Monitor")
         self.setAttribute(Qt.WA_TranslucentBackground)
 
-        w = max(280, self.config.get("win_width", 370))
-        h = max(320, self.config.get("win_height", 490))
+        w = max(340, self.config.get("win_width", 380))
+        h = max(480, self.config.get("win_height", 535))
         self.resize(w, h)
-        self.setMinimumSize(280, 320)
+        self.setMinimumSize(320, 460)
 
         # Initial position
         if self.config.get("pos_x") is not None and self.config.get("pos_y") is not None:
@@ -609,114 +766,64 @@ class GlassWindow(QWidget):
     def init_ui(self):
         self.main_layout = QVBoxLayout(self)
         self.main_layout.setContentsMargins(20, 18, 20, 18)
-        self.main_layout.setSpacing(12)
+        self.main_layout.setSpacing(14)
 
-        # 1. Header Bar: [Logo]      Antigravity Quota      [Pin] [Close]
+        # 1. Header Bar: [Logo Orb]   Antigravity Quota   [Glass Pin] [Glass Close]
         self.hdr = QHBoxLayout()
-        self.hdr.setSpacing(8)
+        self.hdr.setSpacing(10)
 
-        # Vector Antigravity Logo
+        # Glass Logo Orb
         self.logo_lbl = QLabel()
-        self.logo_lbl.setPixmap(create_antigravity_logo(size=28))
+        self.logo_lbl.setPixmap(create_antigravity_glass_logo(size=32))
         self.hdr.addWidget(self.logo_lbl)
 
-        self.hdr.addStretch()
-
         self.title_lbl = QLabel("Antigravity Quota")
-        self.title_lbl.setFont(QFont("Segoe UI", 13, QFont.Bold))
-        self.title_lbl.setStyleSheet("color: #ffffff; letter-spacing: 0.3px;")
+        self.title_lbl.setFont(QFont("Segoe UI Variable Display", 13, QFont.Bold))
+        self.title_lbl.setStyleSheet("color: #ffffff;")
         self.hdr.addWidget(self.title_lbl)
 
         self.hdr.addStretch()
 
-        # Pin button with clean vector icon
-        self.btn_pin = QPushButton()
-        self.btn_pin.setFixedSize(30, 30)
+        # Glass Pin Button
+        pin_svg = SVG_PIN_ON if self.is_pinned else SVG_PIN_OFF
+        self.btn_pin = GlassButton(pin_svg, size=32, inner_size=17, is_active=self.is_pinned)
         self.btn_pin.setToolTip("Pin window (keep visible)")
-        self.btn_pin.setCursor(Qt.PointingHandCursor)
-        self.btn_pin.setIcon(create_pin_icon(pinned=self.is_pinned))
-        self.btn_pin.setIconSize(QSize(22, 22))
-        self.btn_pin.setStyleSheet("""
-            QPushButton {
-                background: rgba(255, 255, 255, 0.07);
-                border: 1px solid rgba(255, 255, 255, 0.12);
-                border-radius: 15px;
-            }
-            QPushButton:hover {
-                background: rgba(255, 255, 255, 0.15);
-            }
-        """)
         self.btn_pin.clicked.connect(self.toggle_pin)
         self.hdr.addWidget(self.btn_pin)
 
-        # Close button with clean vector icon
-        self.btn_close = QPushButton()
-        self.btn_close.setFixedSize(30, 30)
+        # Glass Close Button
+        self.btn_close = GlassButton(SVG_CLOSE, size=32, inner_size=16)
         self.btn_close.setToolTip("Close to system tray")
-        self.btn_close.setCursor(Qt.PointingHandCursor)
-        self.btn_close.setIcon(create_close_icon())
-        self.btn_close.setIconSize(QSize(20, 20))
-        self.btn_close.setStyleSheet("""
-            QPushButton {
-                background: rgba(255, 255, 255, 0.07);
-                border: 1px solid rgba(255, 255, 255, 0.12);
-                border-radius: 15px;
-            }
-            QPushButton:hover {
-                background: rgba(239, 68, 68, 0.35);
-                border-color: rgba(239, 68, 68, 0.50);
-            }
-        """)
         self.btn_close.clicked.connect(self.hide)
         self.hdr.addWidget(self.btn_close)
 
         self.main_layout.addLayout(self.hdr)
 
-        # 2. Scroll Area with Cards
+        # 2. Scroll Area (styled seamlessly without ugly default bars)
         self.scroll = QScrollArea()
         self.scroll.setWidgetResizable(True)
         self.scroll.setFrameShape(QFrame.NoFrame)
         self.scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        self.scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self.scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.scroll.setStyleSheet("""
-            QScrollArea {
-                background: transparent;
-                border: none;
-            }
-            QScrollBar:vertical {
-                border: none;
-                background: transparent;
-                width: 4px;
-                margin: 0px;
-            }
-            QScrollBar::handle:vertical {
-                background: rgba(255, 255, 255, 0.18);
-                border-radius: 2px;
-                min-height: 20px;
-            }
-            QScrollBar::handle:vertical:hover {
-                background: rgba(255, 255, 255, 0.30);
-            }
-            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
-                height: 0px;
-            }
-            QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {
-                background: transparent;
-            }
+            QScrollArea { background: transparent; border: none; }
+            QScrollBar:vertical { border: none; background: transparent; width: 4px; }
+            QScrollBar::handle:vertical { background: rgba(255, 255, 255, 0.18); border-radius: 2px; }
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0px; }
         """)
 
         container = QWidget()
         container.setStyleSheet("background: transparent;")
         c_layout = QVBoxLayout(container)
         c_layout.setContentsMargins(0, 0, 0, 0)
-        c_layout.setSpacing(10)
+        c_layout.setSpacing(12)
 
         # Gemini Card
-        self.card_gemini = GlassQuotaCard("Gemini Models", "FLASH & PRO", "#38bdf8", container)
+        self.card_gemini = PremiumGlassQuotaCard("Gemini Models", "FLASH & PRO", SVG_GEMINI, "#38bdf8", container)
         c_layout.addWidget(self.card_gemini)
 
         # Claude & GPT Card
-        self.card_claude = GlassQuotaCard("Claude & GPT", "OPUS & SONNET", "#fb923c", container)
+        self.card_claude = PremiumGlassQuotaCard("Claude & GPT", "OPUS & SONNET", SVG_CLAUDE, "#fb923c", container)
         c_layout.addWidget(self.card_claude)
 
         c_layout.addStretch()
@@ -726,55 +833,28 @@ class GlassWindow(QWidget):
         # 3. Footer Bar: [● Live synchronized]      [Refresh] [External]
         self.footer = QHBoxLayout()
         self.footer.setContentsMargins(4, 0, 4, 0)
+        self.footer.setSpacing(8)
 
         self.live_dot = QLabel("●")
         self.live_dot.setStyleSheet("color: #34d399; font-size: 11px;")
         self.footer.addWidget(self.live_dot)
 
         self.lbl_status = QLabel("Live synchronized")
-        self.lbl_status.setFont(QFont("Segoe UI", 9))
+        self.lbl_status.setFont(QFont("Segoe UI Variable Text", 9, QFont.Medium))
         self.lbl_status.setStyleSheet("color: rgba(255, 255, 255, 0.45);")
         self.footer.addWidget(self.lbl_status)
 
         self.footer.addStretch()
 
-        # Refresh button with clean vector icon
-        self.btn_refresh = QPushButton()
-        self.btn_refresh.setFixedSize(30, 30)
+        # Glass Refresh Button
+        self.btn_refresh = GlassButton(SVG_REFRESH, size=32, inner_size=17)
         self.btn_refresh.setToolTip("Refresh quotas now")
-        self.btn_refresh.setCursor(Qt.PointingHandCursor)
-        self.btn_refresh.setIcon(create_refresh_icon())
-        self.btn_refresh.setIconSize(QSize(20, 20))
-        self.btn_refresh.setStyleSheet("""
-            QPushButton {
-                background: rgba(255, 255, 255, 0.07);
-                border: 1px solid rgba(255, 255, 255, 0.12);
-                border-radius: 15px;
-            }
-            QPushButton:hover {
-                background: rgba(255, 255, 255, 0.15);
-            }
-        """)
         self.btn_refresh.clicked.connect(self.app_manager.trigger_refresh)
         self.footer.addWidget(self.btn_refresh)
 
-        # External button with clean vector icon
-        self.btn_ext = QPushButton()
-        self.btn_ext.setFixedSize(30, 30)
+        # Glass External Link Button
+        self.btn_ext = GlassButton(SVG_EXTERNAL, size=32, inner_size=17)
         self.btn_ext.setToolTip("Open GitHub Repository")
-        self.btn_ext.setCursor(Qt.PointingHandCursor)
-        self.btn_ext.setIcon(create_external_icon())
-        self.btn_ext.setIconSize(QSize(20, 20))
-        self.btn_ext.setStyleSheet("""
-            QPushButton {
-                background: rgba(255, 255, 255, 0.07);
-                border: 1px solid rgba(255, 255, 255, 0.12);
-                border-radius: 15px;
-            }
-            QPushButton:hover {
-                background: rgba(255, 255, 255, 0.15);
-            }
-        """)
         self.btn_ext.clicked.connect(self.open_repo)
         self.footer.addWidget(self.btn_ext)
 
@@ -785,7 +865,7 @@ class GlassWindow(QWidget):
 
     def toggle_pin(self):
         self.is_pinned = not self.is_pinned
-        self.btn_pin.setIcon(create_pin_icon(pinned=self.is_pinned))
+        self.btn_pin.set_svg(SVG_PIN_ON if self.is_pinned else SVG_PIN_OFF, is_active=self.is_pinned)
         self.config["pinned"] = self.is_pinned
         save_config(self.config)
 
@@ -805,17 +885,21 @@ class GlassWindow(QWidget):
         path = QPainterPath()
         path.addRoundedRect(rect, 26.0, 26.0)
 
-        # 1. True glass dark tint: alpha 30 (reveals the desktop wallpaper through the glass)
-        painter.fillPath(path, QColor(14, 20, 32, 30))
+        # 1. True glass dark tint: reveals the desktop wallpaper through the acrylic blur
+        painter.fillPath(path, QColor(14, 20, 32, 28))
 
         # 2. Specular glass reflection gradient at top edge
-        grad = QLinearGradient(0, 0, 0, 110)
-        grad.setColorAt(0.0, QColor(255, 255, 255, 20))
+        grad = QLinearGradient(0, 0, 0, 130)
+        grad.setColorAt(0.0, QColor(255, 255, 255, 26))
         grad.setColorAt(1.0, QColor(255, 255, 255, 0))
         painter.fillPath(path, grad)
 
         # 3. Delicate glass border highlight
-        pen = QPen(QColor(255, 255, 255, 36), 1.0)
+        grad_border = QLinearGradient(0, 0, 0, self.height())
+        grad_border.setColorAt(0.0, QColor(255, 255, 255, 55))
+        grad_border.setColorAt(0.5, QColor(255, 255, 255, 25))
+        grad_border.setColorAt(1.0, QColor(255, 255, 255, 12))
+        pen = QPen(grad_border, 1.0)
         painter.setPen(pen)
         painter.drawPath(path)
 
@@ -867,18 +951,18 @@ class GlassWindow(QWidget):
         save_config(self.config)
 
         # Responsive scaling
-        w_factor = w / 370.0
-        h_factor = h / 490.0
+        w_factor = w / 380.0
+        h_factor = h / 535.0
         factor = min(w_factor, h_factor)
         scale = max(0.80, min(1.0, factor))
 
         margin = max(14, int(20 * scale))
-        spacing = max(8, int(12 * scale))
+        spacing = max(8, int(14 * scale))
         self.main_layout.setContentsMargins(margin, margin, margin, margin)
         self.main_layout.setSpacing(spacing)
 
         title_pt = max(10, int(13 * scale))
-        self.title_lbl.setFont(QFont("Segoe UI", title_pt, QFont.Bold))
+        self.title_lbl.setFont(QFont("Segoe UI Variable Display", title_pt, QFont.Bold))
 
         self.card_gemini.update_scaling(scale)
         self.card_claude.update_scaling(scale)
@@ -1018,7 +1102,7 @@ class AppManager(QObject):
         self.tray.setIcon(QIcon(pixmap))
 
     def on_tray_activated(self, reason):
-        if reason == QSystemTrayIcon.Trigger: # Left click
+        if reason == QSystemTrayIcon.Trigger:  # Left click
             if self.window.isVisible():
                 self.window.hide()
             else:
