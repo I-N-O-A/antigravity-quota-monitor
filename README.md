@@ -45,7 +45,7 @@ cd antigravity-quota-monitor
 ```powershell
 pip install -r requirements.txt
 ```
-*(Installs `pystray` for the Windows system tray icon and `Pillow` for dynamic ring rendering).*
+*(Installs `PyQt5` for native Windows 11 frosted acrylic glass with smooth rounded corners, and `Pillow` for dynamic high-DPI tray icon generation).*
 
 ### Step 3: Start Application
 * **Silently in the background (no console window)**:

@@ -1,8 +1,8 @@
 """
 Antigravity Quota Monitor - Windows System Tray Utility
-Monitors API limits and usage for Gemini and Claude/GPT model groups in real-time.
-Features floating, multi-border resizable glassmorphic window, real-time second-by-second countdowns,
-Windows 11 acrylic styling, anti-aliased rounded corners, and centered tray icon.
+Monitors API limits and quotas for Gemini and Claude/GPT model groups in real-time.
+Built with PyQt5 for native Windows 11 frosted acrylic glass, smooth anti-aliased
+rounded corners (radius 28px), seamless non-client edge resizing, and responsive content scaling.
 """
 
 import os
@@ -10,8 +10,7 @@ import sys
 
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
 
-# Under pythonw.exe on Windows, sys.stdout and sys.stderr are None.
-# Redirect them so print() or library errors never crash the application.
+# Redirect stdout/stderr when running via pythonw.exe
 if sys.stdout is None:
     try:
         sys.stdout = open(os.path.join(APP_DIR, "agy_tray_stdout.log"), "a", encoding="utf-8")
@@ -28,43 +27,81 @@ import json
 import time
 import shutil
 import ctypes
-import threading
 from ctypes import wintypes
-import queue
+import threading
 import winreg
 from datetime import datetime, timezone
 import subprocess
-import tkinter as tk
-from PIL import Image, ImageDraw, ImageFont
-import pystray
-from pystray import MenuItem as item, Menu
 
-# Attach thread to interactive user desktop
+from PyQt5.QtCore import Qt, QTimer, QPoint, QRectF, QSize, pyqtSignal, QObject
+from PyQt5.QtGui import QPainter, QColor, QPainterPath, QPen, QFont, QIcon, QPixmap, QCursor
+from PyQt5.QtWidgets import (
+    QApplication, QWidget, QVBoxLayout, QHBoxLayout, QLabel,
+    QPushButton, QProgressBar, QFrame, QScrollArea, QSystemTrayIcon,
+    QMenu, QAction, QSizePolicy
+)
+
+# Ensure interactive desktop access
 def ensure_default_desktop():
     try:
         user32 = ctypes.windll.user32
         hDesk = user32.OpenDesktopW("Default", 0, False, 0x01FF)
         if hDesk:
             user32.SetThreadDesktop(hDesk)
-            orig_run = threading.Thread.run
-            def desktop_thread_run(self):
-                try:
-                    user32.SetThreadDesktop(hDesk)
-                except Exception:
-                    pass
-                return orig_run(self)
-            threading.Thread.run = desktop_thread_run
     except Exception:
         pass
 
 ensure_default_desktop()
 
-# DPI Awareness for crisp rendering on Windows High-DPI screens
-try:
-    ctypes.windll.shcore.SetProcessDpiAwareness(1)
-except Exception:
+# Windows 11 DWM and Composition Structures
+class ACCENT_POLICY(ctypes.Structure):
+    _fields_ = [
+        ("AccentState", ctypes.c_int),
+        ("AccentFlags", ctypes.c_int),
+        ("GradientColor", ctypes.c_uint32),
+        ("AnimationId", ctypes.c_int),
+    ]
+
+class WINDOWCOMPOSITIONATTRIBDATA(ctypes.Structure):
+    _fields_ = [
+        ("Attribute", ctypes.c_int),
+        ("Data", ctypes.c_void_p),
+        ("SizeOfData", ctypes.c_size_t),
+    ]
+
+def apply_acrylic_blur(hwnd, color=0xA0140F0A):
+    """
+    Apply native Windows 11 Acrylic blur behind window.
+    GradientColor is 0xAABBGGRR.
+    """
     try:
-        ctypes.windll.user32.SetProcessDPIAware()
+        user32 = ctypes.windll.user32
+        dwmapi = ctypes.windll.dwmapi
+
+        # Dark mode (DWMWA_USE_IMMERSIVE_DARK_MODE = 20)
+        val_dark = ctypes.c_int(1)
+        dwmapi.DwmSetWindowAttribute(hwnd, 20, ctypes.byref(val_dark), 4)
+
+        # Disable DWM outer border (DWMWA_BORDER_COLOR = 34, DWMWA_COLOR_NONE = 0xFFFFFFFE)
+        val_border = ctypes.c_uint32(0xFFFFFFFE)
+        dwmapi.DwmSetWindowAttribute(hwnd, 34, ctypes.byref(val_border), 4)
+
+        # Do not round DWM bounding rect (DWMWCP_DONOTROUND = 1) so Qt's smooth 28px radius shines without extra outlines
+        val_corner = ctypes.c_int(1)
+        dwmapi.DwmSetWindowAttribute(hwnd, 33, ctypes.byref(val_corner), 4)
+
+        accent = ACCENT_POLICY()
+        accent.AccentState = 4  # ACCENT_ENABLE_ACRYLICBLURBEHIND
+        accent.AccentFlags = 2
+        accent.GradientColor = color
+        accent.AnimationId = 0
+
+        data = WINDOWCOMPOSITIONATTRIBDATA()
+        data.Attribute = 19  # WCA_ACCENT_POLICY
+        data.Data = ctypes.cast(ctypes.byref(accent), ctypes.c_void_p)
+        data.SizeOfData = ctypes.sizeof(accent)
+
+        user32.SetWindowCompositionAttribute(hwnd, ctypes.byref(data))
     except Exception:
         pass
 
@@ -73,16 +110,16 @@ CONFIG_PATH = os.path.join(APP_DIR, "config.json")
 REG_PATH = r"Software\Microsoft\Windows\CurrentVersion\Run"
 REG_NAME = "AntigravityQuotaTray"
 MUTEX_NAME = "AntigravityQuotaTray_SingleInstance_Mutex"
+SHOW_EVENT_NAME = "AntigravityQuotaTray_ShowEvent"
 _mutex_handle = None
+_show_event_handle = None
 
 DEFAULT_CONFIG = {
     "background_refresh_seconds": 60,
     "live_refresh_seconds": 10,
     "pinned": False,
-    "theme": "dark",
-    "win_width": 390,
-    "win_height": 520,
-    "custom_pos": False,
+    "win_width": 360,
+    "win_height": 500,
     "pos_x": None,
     "pos_y": None
 }
@@ -104,55 +141,17 @@ def save_config(cfg):
     except Exception:
         pass
 
-# Work Area helper for screen positioning
-class RECT(ctypes.Structure):
-    _fields_ = [
-        ('left', wintypes.LONG),
-        ('top', wintypes.LONG),
-        ('right', wintypes.LONG),
-        ('bottom', wintypes.LONG),
-    ]
-
-def get_work_area():
-    SPI_GETWORKAREA = 0x0030
-    rect = RECT()
-    ctypes.windll.user32.SystemParametersInfoW(SPI_GETWORKAREA, 0, ctypes.byref(rect), 0)
-    return rect.left, rect.top, rect.right, rect.bottom
-
-# Windows 11 DWM Styling: Dark Mode & Acrylic Backdrop
-def apply_dwm_styling(root):
-    try:
-        root.update_idletasks()
-        hwnd = root.winfo_id()
-        top_hwnd = ctypes.windll.user32.GetParent(hwnd) or hwnd
-        
-        # 1. Dark Mode
-        val_dark = ctypes.c_int(1)
-        ctypes.windll.dwmapi.DwmSetWindowAttribute(
-            top_hwnd, 20, ctypes.byref(val_dark), ctypes.sizeof(val_dark)
-        )
-        # 2. Rounded Corners (DWMWCP_ROUND = 2)
-        val_round = ctypes.c_int(2)
-        ctypes.windll.dwmapi.DwmSetWindowAttribute(
-            top_hwnd, 33, ctypes.byref(val_round), ctypes.sizeof(val_round)
-        )
-        # 3. Acrylic / Mica backdrop
-        val_acrylic = ctypes.c_int(3)
-        ctypes.windll.dwmapi.DwmSetWindowAttribute(
-            top_hwnd, 38, ctypes.byref(val_acrylic), ctypes.sizeof(val_acrylic)
-        )
-    except Exception:
-        pass
-
 # Autostart Helpers
 def is_autostart_enabled():
     try:
         key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, REG_PATH, 0, winreg.KEY_READ)
-        val, _ = winreg.QueryValueEx(key, REG_NAME)
-        winreg.CloseKey(key)
-        return bool(val)
-    except FileNotFoundError:
-        return False
+        try:
+            winreg.QueryValueEx(key, REG_NAME)
+            return True
+        except FileNotFoundError:
+            return False
+        finally:
+            winreg.CloseKey(key)
     except Exception:
         return False
 
@@ -160,15 +159,9 @@ def set_autostart(enable: bool):
     try:
         key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, REG_PATH, 0, winreg.KEY_SET_VALUE)
         if enable:
-            vbs_path = os.path.join(APP_DIR, "start_silent.vbs")
-            if os.path.exists(vbs_path):
-                cmd = f'wscript.exe "{vbs_path}"'
-            else:
-                pythonw = os.path.join(os.path.dirname(sys.executable), "pythonw.exe")
-                if not os.path.exists(pythonw):
-                    pythonw = sys.executable
-                script_path = os.path.abspath(__file__)
-                cmd = f'"{pythonw}" "{script_path}"'
+            pythonw = shutil.which("pythonw.exe") or sys.executable.replace("python.exe", "pythonw.exe")
+            script_path = os.path.abspath(__file__)
+            cmd = f'"{pythonw}" "{script_path}" --minimized'
             winreg.SetValueEx(key, REG_NAME, 0, winreg.REG_SZ, cmd)
         else:
             try:
@@ -181,915 +174,833 @@ def set_autostart(enable: bool):
         print(f"Autostart Error: {e}")
         return False
 
-# Ensure Tray Icon is Promoted (Visible on Taskbar in Windows 11)
-def ensure_promoted_in_tray():
-    try:
-        base_key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Control Panel\NotifyIconSettings", 0, winreg.KEY_READ | winreg.KEY_WRITE)
-        i = 0
-        while True:
-            try:
-                subkey_name = winreg.EnumKey(base_key, i)
-                i += 1
-                subkey = winreg.OpenKey(base_key, subkey_name, 0, winreg.KEY_READ | winreg.KEY_WRITE)
-                try:
-                    exe_val, _ = winreg.QueryValueEx(subkey, "ExecutablePath")
-                    if any(p in exe_val.lower() for p in ("python", "agy_tray")):
-                        winreg.SetValueEx(subkey, "IsPromoted", 0, winreg.REG_DWORD, 1)
-                except Exception:
-                    pass
-                finally:
-                    winreg.CloseKey(subkey)
-            except OSError:
-                break
-        winreg.CloseKey(base_key)
-    except Exception:
-        pass
+# High-DPI Tray Icon Generator
+def create_tray_pixmap(min_fraction=1.0):
+    size = 64
+    pixmap = QPixmap(size, size)
+    pixmap.fill(Qt.transparent)
 
-# Locate agy.exe
-def get_agy_path():
-    path = shutil.which("agy")
-    if path and os.path.exists(path):
-        return path
-    local_app_data = os.environ.get("LOCALAPPDATA", "")
-    candidate = os.path.join(local_app_data, "agy", "bin", "agy.exe")
-    if os.path.exists(candidate):
-        return candidate
-    candidate2 = os.path.expanduser(r"~\AppData\Local\agy\bin\agy.exe")
-    if os.path.exists(candidate2):
-        return candidate2
-    return "agy"
+    painter = QPainter(pixmap)
+    painter.setRenderHint(QPainter.Antialiasing)
 
-# Data Fetcher
-def fetch_usage_data():
-    agy_path = get_agy_path()
-    creationflags = 0
-    startupinfo = None
-    if sys.platform == "win32":
-        creationflags = subprocess.CREATE_NO_WINDOW
-        startupinfo = subprocess.STARTUPINFO()
-        startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-        startupinfo.wShowWindow = 0
-    
-    try:
-        proc = subprocess.run(
-            [agy_path, "-p", "/usage", "--output-format", "json"],
-            capture_output=True,
-            text=True,
-            timeout=15,
-            creationflags=creationflags,
-            startupinfo=startupinfo
-        )
-        if proc.returncode != 0:
-            return None, f"Exit-Code {proc.returncode}: {proc.stderr.strip() or 'Fehler beim Abruf'}"
-        
-        stdout = proc.stdout.strip()
-        s_idx = stdout.find("{")
-        e_idx = stdout.rfind("}")
-        if s_idx != -1 and e_idx != -1:
-            data = json.loads(stdout[s_idx:e_idx+1])
-        else:
-            data = json.loads(stdout)
-            
-        cmd_data = data.get("command", {}).get("data", {})
-        return cmd_data, None
-    except subprocess.TimeoutExpired:
-        return None, "Zeitüberschreitung beim Abruf der Daten"
-    except Exception as e:
-        return None, str(e)
+    # Outer circle background: Deep slate (#0f172a)
+    path_bg = QPainterPath()
+    path_bg.addEllipse(3, 3, 58, 58)
+    painter.fillPath(path_bg, QColor(15, 23, 42, 255))
+    painter.strokePath(path_bg, QPen(QColor(51, 65, 85, 255), 1.5))
 
-def format_countdown_seconds(target_dt, fraction=1.0):
-    if not target_dt:
-        return "Reset: --"
+    # Track ring
+    path_track = QPainterPath()
+    path_track.addEllipse(5, 5, 54, 54)
+    painter.strokePath(path_track, QPen(QColor(51, 65, 85, 180), 3.5))
+
+    # Color for quota
+    if min_fraction > 0.5:
+        color = QColor(52, 211, 153)  # Emerald green
+    elif min_fraction > 0.2:
+        color = QColor(251, 191, 36)  # Amber
+    else:
+        color = QColor(248, 113, 113) # Coral red
+
+    # Progress Arc
+    span_angle = int(max(0.04, min(1.0, min_fraction)) * 360 * 16)
+    pen_arc = QPen(color, 4.0)
+    pen_arc.setCapStyle(Qt.RoundCap)
+    painter.setPen(pen_arc)
+    painter.drawArc(5, 5, 54, 54, 90 * 16, -span_angle)
+
+    # Center text "AG"
+    font = QFont("Segoe UI", 16, QFont.Bold)
+    painter.setFont(font)
+    painter.setPen(QColor(255, 255, 255))
+    painter.drawText(QRectF(0, 1, size, size), Qt.AlignCenter, "AG")
+
+    painter.end()
+    return pixmap
+
+# Helper to format countdown
+def format_countdown(reset_time_str):
+    if not reset_time_str:
+        return "100% available"
     try:
-        now_dt = datetime.now(timezone.utc)
-        diff = int((target_dt - now_dt).total_seconds())
+        t_clean = reset_time_str.replace("Z", "+00:00")
+        target = datetime.fromisoformat(t_clean)
+        now = datetime.now(timezone.utc)
+        diff = (target - now).total_seconds()
         if diff <= 0:
-            if fraction >= 0.999:
-                return "100% bereit"
-            return "Reset fällig • lädt nach"
+            return "100% refreshed"
+        d = int(diff // 86400)
+        h = int((diff % 86400) // 3600)
+        m = int((diff % 3600) // 60)
+        s = int(diff % 60)
         
-        days = diff // 86400
-        rem = diff % 86400
-        hours = rem // 3600
-        mins = (rem % 3600) // 60
-        secs = rem % 60
-        
-        if days > 0:
-            return f"Reset in {days}T {hours}Std"
-        elif hours > 0:
-            return f"Reset in {hours}h {mins:02d}m {secs:02d}s"
-        elif mins > 0:
-            return f"Reset in {mins}m {secs:02d}s"
+        # Local reset time string
+        local_time = target.astimezone()
+        local_str = local_time.strftime("%m/%d %H:%M")
+
+        if d > 0:
+            return f"Reset in {d}d {h}h ({local_str})"
+        elif h > 0:
+            return f"Reset in {h}h {m}m {s:02d}s ({local_str})"
         else:
-            return f"Reset in {secs}s"
+            return f"Reset in {m}m {s:02d}s ({local_str})"
     except Exception:
-        return "Reset: --"
+        return "Reset in progress"
 
-def get_color_for_fraction(fraction):
-    if fraction >= 0.50:
-        return "#10b981"  # Emerald Green
-    elif fraction >= 0.20:
-        return "#f59e0b"  # Amber Orange
-    else:
-        return "#ef4444"  # Rose Red
+# Responsive Quota Card Widget
+class ResponsiveQuotaCard(QFrame):
+    def __init__(self, group_name, badge_text, accent_color, parent=None):
+        super().__init__(parent)
+        self.accent_color = accent_color
+        self.group_name = group_name
+        self.badge_text = badge_text
+        self.setObjectName("quotaCard")
+        self.setStyleSheet("""
+            #quotaCard {
+                background: rgba(255, 255, 255, 0.05);
+                border: 1px solid rgba(255, 255, 255, 0.10);
+                border-radius: 18px;
+            }
+        """)
 
-# Modern Windows 11 Tray Icon Generator (Supersampled & Mathematically Centered)
-def create_tray_image(min_fraction=1.0):
-    canvas_size = 256
-    img = Image.new("RGBA", (canvas_size, canvas_size), (0, 0, 0, 0))
-    draw = ImageDraw.Draw(img)
-    
-    pad = 12
-    draw.ellipse(
-        (pad, pad, canvas_size - pad, canvas_size - pad),
-        fill=(18, 24, 38, 255),
-        outline=(55, 65, 81, 255),
-        width=4
-    )
-    
-    track_pad = 24
-    draw.ellipse(
-        (track_pad, track_pad, canvas_size - track_pad, canvas_size - track_pad),
-        outline=(40, 50, 68, 255),
-        width=18
-    )
-    
-    sweep = max(18, int(min_fraction * 360))
-    if min_fraction >= 0.50:
-        color = (16, 185, 129, 255)
-    elif min_fraction >= 0.20:
-        color = (245, 158, 11, 255)
-    else:
-        color = (239, 68, 68, 255)
-        
-    draw.arc(
-        (track_pad, track_pad, canvas_size - track_pad, canvas_size - track_pad),
-        start=-90,
-        end=-90 + sweep,
-        fill=color,
-        width=18
-    )
-    
-    try:
-        font = ImageFont.truetype("segoeuib.ttf", 92)
-    except Exception:
-        font = ImageFont.load_default()
-        
-    bbox = draw.textbbox((0, 0), "AG", font=font)
-    tw = bbox[2] - bbox[0]
-    th = bbox[3] - bbox[1]
-    tx = (canvas_size - tw) / 2.0 - bbox[0]
-    ty = (canvas_size - th) / 2.0 - bbox[1]
-    draw.text((tx, ty), "AG", fill=(255, 255, 255, 255), font=font)
-    
-    return img.resize((64, 64), Image.Resampling.LANCZOS)
+        self.layout = QVBoxLayout(self)
+        self.layout.setContentsMargins(16, 14, 16, 14)
+        self.layout.setSpacing(8)
 
-# QuotaApp with True Canvas-based Glassmorphism UI
-TRANSPARENT_KEY = "#010203"
+        # Header Row
+        self.hdr = QHBoxLayout()
+        self.hdr.setSpacing(6)
 
-class QuotaApp:
-    def __init__(self):
+        self.dot = QLabel("●")
+        self.dot.setStyleSheet(f"color: {accent_color}; font-size: 11px;")
+        self.hdr.addWidget(self.dot)
+
+        self.title = QLabel(group_name)
+        self.title.setFont(QFont("Segoe UI", 11, QFont.Bold))
+        self.title.setStyleSheet("color: #ffffff;")
+        self.hdr.addWidget(self.title)
+
+        self.hdr.addStretch()
+
+        self.badge = QLabel(badge_text)
+        self.badge.setFont(QFont("Segoe UI", 8, QFont.Bold))
+        self.badge.setStyleSheet(f"""
+            background: rgba(255, 255, 255, 0.08);
+            color: {accent_color};
+            border: 1px solid rgba(255, 255, 255, 0.12);
+            padding: 2px 7px;
+            border-radius: 6px;
+        """)
+        self.hdr.addWidget(self.badge)
+
+        self.layout.addLayout(self.hdr)
+
+        # 5h Row
+        self.r1 = QHBoxLayout()
+        self.lbl_5h = QLabel("5h")
+        self.lbl_5h.setFont(QFont("Segoe UI", 10, QFont.Bold))
+        self.lbl_5h.setStyleSheet("color: #94a3b8;")
+        self.val_5h = QLabel("--%")
+        self.val_5h.setFont(QFont("Segoe UI", 11, QFont.Bold))
+        self.val_5h.setStyleSheet("color: #34d399;")
+        self.r1.addWidget(self.lbl_5h)
+        self.r1.addStretch()
+        self.r1.addWidget(self.val_5h)
+        self.layout.addLayout(self.r1)
+
+        self.bar_5h = QProgressBar()
+        self.bar_5h.setFixedHeight(6)
+        self.bar_5h.setTextVisible(False)
+        self.bar_5h.setValue(100)
+        self.set_bar_color(self.bar_5h, "#34d399")
+        self.layout.addWidget(self.bar_5h)
+
+        self.time_5h = QLabel("Loading...")
+        self.time_5h.setFont(QFont("Segoe UI", 8))
+        self.time_5h.setStyleSheet("color: #64748b;")
+        self.layout.addWidget(self.time_5h)
+
+        self.layout.addSpacing(3)
+
+        # Weekly Row
+        self.r2 = QHBoxLayout()
+        self.lbl_wk = QLabel("Weekly")
+        self.lbl_wk.setFont(QFont("Segoe UI", 10, QFont.Bold))
+        self.lbl_wk.setStyleSheet("color: #94a3b8;")
+        self.val_wk = QLabel("--%")
+        self.val_wk.setFont(QFont("Segoe UI", 11, QFont.Bold))
+        self.val_wk.setStyleSheet("color: #34d399;")
+        self.r2.addWidget(self.lbl_wk)
+        self.r2.addStretch()
+        self.r2.addWidget(self.val_wk)
+        self.layout.addLayout(self.r2)
+
+        self.bar_wk = QProgressBar()
+        self.bar_wk.setFixedHeight(6)
+        self.bar_wk.setTextVisible(False)
+        self.bar_wk.setValue(100)
+        self.set_bar_color(self.bar_wk, "#34d399")
+        self.layout.addWidget(self.bar_wk)
+
+        self.time_wk = QLabel("Loading...")
+        self.time_wk.setFont(QFont("Segoe UI", 8))
+        self.time_wk.setStyleSheet("color: #64748b;")
+        self.layout.addWidget(self.time_wk)
+
+        self.bucket_5h_reset = None
+        self.bucket_wk_reset = None
+
+    def set_bar_color(self, bar, hex_color):
+        bar.setStyleSheet(f"""
+            QProgressBar {{
+                background: rgba(255, 255, 255, 0.08);
+                border-radius: 3px;
+                border: none;
+            }}
+            QProgressBar::chunk {{
+                background: {hex_color};
+                border-radius: 3px;
+            }}
+        """)
+
+    def update_data(self, b_5h, b_wk):
+        if b_5h:
+            frac = b_5h.get("remaining_fraction", 1.0)
+            pct = int(round(frac * 100))
+            self.val_5h.setText(f"{pct}%")
+            self.bar_5h.setValue(pct)
+            color = "#34d399" if frac > 0.5 else ("#fbbf24" if frac > 0.2 else "#f87171")
+            self.val_5h.setStyleSheet(f"color: {color}; font-weight: bold;")
+            self.set_bar_color(self.bar_5h, color)
+            self.bucket_5h_reset = b_5h.get("reset_time")
+            self.time_5h.setText(format_countdown(self.bucket_5h_reset))
+
+        if b_wk:
+            frac = b_wk.get("remaining_fraction", 1.0)
+            pct = int(round(frac * 100))
+            self.val_wk.setText(f"{pct}%")
+            self.bar_wk.setValue(pct)
+            color = "#34d399" if frac > 0.5 else ("#fbbf24" if frac > 0.2 else "#f87171")
+            self.val_wk.setStyleSheet(f"color: {color}; font-weight: bold;")
+            self.set_bar_color(self.bar_wk, color)
+            self.bucket_wk_reset = b_wk.get("reset_time")
+            self.time_wk.setText(format_countdown(self.bucket_wk_reset))
+
+    def tick_second(self):
+        if self.bucket_5h_reset:
+            self.time_5h.setText(format_countdown(self.bucket_5h_reset))
+        if self.bucket_wk_reset:
+            self.time_wk.setText(format_countdown(self.bucket_wk_reset))
+
+    def update_scaling(self, scale_factor):
+        pad_h = int(14 * scale_factor)
+        pad_v = int(12 * scale_factor)
+        spacing = int(8 * scale_factor)
+        self.layout.setContentsMargins(pad_h, pad_v, pad_h, pad_v)
+        self.layout.setSpacing(spacing)
+
+        title_pt = max(9, int(11 * scale_factor))
+        self.title.setFont(QFont("Segoe UI", title_pt, QFont.Bold))
+
+        lbl_pt = max(8, int(10 * scale_factor))
+        val_pt = max(9, int(11 * scale_factor))
+        self.lbl_5h.setFont(QFont("Segoe UI", lbl_pt, QFont.Bold))
+        self.lbl_wk.setFont(QFont("Segoe UI", lbl_pt, QFont.Bold))
+        self.val_5h.setFont(QFont("Segoe UI", val_pt, QFont.Bold))
+        self.val_wk.setFont(QFont("Segoe UI", val_pt, QFont.Bold))
+
+        time_pt = max(7, int(8 * scale_factor))
+        self.time_5h.setFont(QFont("Segoe UI", time_pt))
+        self.time_wk.setFont(QFont("Segoe UI", time_pt))
+
+        bar_h = max(4, int(6 * scale_factor))
+        self.bar_5h.setFixedHeight(bar_h)
+        self.bar_wk.setFixedHeight(bar_h)
+
+# Main Glass Floating Window
+class GlassWindow(QWidget):
+    BORDER_WIDTH = 9
+    data_received = pyqtSignal(dict)
+
+    def __init__(self, app_manager):
+        super().__init__()
+        self.app_manager = app_manager
         self.config = load_config()
-        self.latest_data = None
-        self.is_fetching = False
-        self.last_successful_fetch = 0
-        self.last_fetch_start = 0
-        self.pinned = self.config.get("pinned", False)
-        self.msg_queue = queue.Queue()
-        
-        # Reset target cache for live 1-second countdowns
-        self.bucket_reset_targets = {}
-        
-        # Window & Interaction State
-        self.is_open = False
-        self.open_timestamp = 0
-        self.last_hide_time = 0
-        self.last_interaction_time = 0
-        self.mouse_is_down_inside = False
-        
-        self.is_dragging = False
-        self.drag_start_x = 0
-        self.drag_start_y = 0
-        self.win_start_x = 0
-        self.win_start_y = 0
-        
-        self.is_resizing = False
-        self.resize_direction = ""
-        self.resize_start_x = 0
-        self.resize_start_y = 0
-        self.resize_start_win_x = 0
-        self.resize_start_win_y = 0
-        self.resize_start_w = 0
-        self.resize_start_h = 0
-        
-        self.win_width = max(310, min(900, self.config.get("win_width", 390)))
-        self.win_height = max(360, min(1000, self.config.get("win_height", 520)))
-        
-        # Tkinter Root Setup
-        self.root = tk.Tk()
-        self.root.title("Antigravity Quota")
-        self.root.overrideredirect(True)
-        self.root.attributes("-topmost", True)
-        
-        # Windows transparent colorkey for smooth anti-aliased rounded glass curves
-        try:
-            self.root.wm_attributes("-transparentcolor", TRANSPARENT_KEY)
-        except Exception:
-            pass
-        self.root.configure(bg=TRANSPARENT_KEY)
-        
-        ico_path = os.path.join(APP_DIR, "icon.ico")
-        if os.path.exists(ico_path):
-            try:
-                self.root.iconbitmap(ico_path)
-            except Exception:
-                pass
-        
-        # Main Canvas for high-performance Glassmorphic drawing
-        self.canvas = tk.Canvas(
-            self.root,
-            width=self.win_width,
-            height=self.win_height,
-            bg=TRANSPARENT_KEY,
-            highlightthickness=0,
-            bd=0
-        )
-        self.canvas.pack(fill="both", expand=True)
-        
-        self.setup_resize_borders()
-        self.bind_events()
-        
-        # Initial glass render
-        self.render_glass_ui()
-        
-        # Start queue poller
-        self._process_queue()
-        
-        # Tray Icon setup
-        self.tray_icon = None
-        self.init_tray_icon()
-        
-        # Promote icon in Windows 11 taskbar
-        self.root.after(1000, ensure_promoted_in_tray)
-        
-        # Fast click-outside polling loop (runs every 30ms)
-        self._poll_click_outside()
-        
-        # 1-second live ticker
-        self._tick_live()
-        
-        # Single instance show event listener
-        self._poll_show_event()
-        
-        # Initial data fetch
-        self.trigger_refresh(silent=True)
+        self.is_pinned = self.config.get("pinned", False)
+        self._just_shown = False
 
-        # Show window on launch
-        if "--minimized" not in sys.argv and "--silent" not in sys.argv:
-            self.root.after(200, self.show_window)
+        self.setWindowFlags(Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.SubWindow)
+        self.setAttribute(Qt.WA_TranslucentBackground)
 
-    def post(self, callback, *args, **kwargs):
-        self.msg_queue.put((callback, args, kwargs))
+        w = max(280, self.config.get("win_width", 360))
+        h = max(320, self.config.get("win_height", 500))
+        self.resize(w, h)
+        self.setMinimumSize(270, 300)
 
-    def _process_queue(self):
-        try:
-            while True:
-                cb, args, kwargs = self.msg_queue.get_nowait()
-                try:
-                    cb(*args, **kwargs)
-                except Exception as e:
-                    print(f"Callback error: {e}")
-        except queue.Empty:
-            pass
-        self.root.after(40, self._process_queue)
+        # Initial position
+        if self.config.get("pos_x") is not None and self.config.get("pos_y") is not None:
+            self.move(self.config["pos_x"], self.config["pos_y"])
+        else:
+            self.move_to_default_position()
 
-    def round_poly(self, x1, y1, x2, y2, r=16, **kwargs):
-        """Draws a smooth anti-aliased rounded polygon on the canvas."""
-        points = [
-            x1+r, y1, x2-r, y1, x2, y1,
-            x2, y1+r, x2, y2-r, x2, y2,
-            x2-r, y2, x1+r, y2, x1, y2,
-            x1, y2-r, x1, y1+r, x1, y1
-        ]
-        return self.canvas.create_polygon(points, smooth=True, **kwargs)
+        self.init_ui()
 
-    def render_glass_ui(self):
-        """Renders the complete Glassmorphism UI with cards, specular highlights, and neon progress bars."""
-        self.canvas.delete("all")
-        w = self.win_width
-        h = self.win_height
-        
-        # 1. Main outer glass body (deep translucent obsidian with luminous 1px border)
-        self.round_poly(4, 4, w - 4, h - 4, r=20, fill="#0c111e", outline="#2c3a54", width=1, tags="bg_poly")
-        # Specular light refraction line at top of glass window
-        self.canvas.create_line(24, 5, w - 24, 5, fill="#485c7f", width=1)
-        self.canvas.create_line(28, 6, w - 28, 6, fill="#202c42", width=1)
-        
-        # 2. Header
-        # Electric Blue Glass Logo Pill
-        self.round_poly(18, 16, 52, 40, r=8, fill="#2563eb", outline="#3b82f6", width=1)
-        self.canvas.create_text(35, 28, text="AG", fill="#ffffff", font=("Segoe UI", 10, "bold"))
-        
-        # Window Title
-        self.canvas.create_text(60, 28, text="Antigravity Quota", anchor="w", fill="#f8fafc", font=("Segoe UI", 13, "bold"), tags="header_drag")
-        
-        # LIVE Glass Badge
-        live_badge_fill = "#064e3b" if (time.time() - self.last_successful_fetch <= 15 and self.last_successful_fetch > 0) else ("#450a0a" if self.last_successful_fetch > 0 else "#064e3b")
-        live_badge_border = "#10b981" if (time.time() - self.last_successful_fetch <= 15 and self.last_successful_fetch > 0) else ("#ef4444" if self.last_successful_fetch > 0 else "#10b981")
-        live_text = "● LIVE" if (time.time() - self.last_successful_fetch <= 15 or self.last_successful_fetch == 0) else "● OFFLINE"
-        live_text_col = "#10b981" if (time.time() - self.last_successful_fetch <= 15 or self.last_successful_fetch == 0) else "#ef4444"
-        
-        self.round_poly(206, 18, 268, 38, r=9, fill=live_badge_fill, outline=live_badge_border, width=1, tags="live_badge_bg")
-        self.canvas.create_text(237, 28, text=live_text, fill=live_text_col, font=("Segoe UI", 9, "bold"), tags="live_badge_txt")
-        
-        # Header Action Buttons: Pin & Close
+        # Connect data signal
+        self.data_received.connect(self.on_data_received)
+
+        # 1-second countdown ticker
+        self.ticker = QTimer(self)
+        self.ticker.timeout.connect(self.on_second_tick)
+        self.ticker.start(1000)
+
+        self.last_sync_ts = time.time()
+
+    def move_to_default_position(self):
+        screen = QApplication.primaryScreen().availableGeometry()
+        x = screen.right() - self.width() - 16
+        y = screen.bottom() - self.height() - 16
+        self.move(x, y)
+
+    def init_ui(self):
+        self.main_layout = QVBoxLayout(self)
+        self.main_layout.setContentsMargins(16, 16, 16, 16)
+        self.main_layout.setSpacing(10)
+
+        # --- Top Header Bar ---
+        self.hdr = QHBoxLayout()
+        self.hdr.setSpacing(7)
+
+        # AG Badge
+        self.ag_badge = QLabel("AG")
+        self.ag_badge.setFont(QFont("Segoe UI", 9, QFont.Bold))
+        self.ag_badge.setStyleSheet("""
+            background: #2563eb;
+            color: white;
+            padding: 2px 7px;
+            border-radius: 6px;
+        """)
+        self.hdr.addWidget(self.ag_badge)
+
+        # Title
+        self.win_title = QLabel("Antigravity Quota")
+        self.win_title.setFont(QFont("Segoe UI", 12, QFont.Bold))
+        self.win_title.setStyleSheet("color: #ffffff;")
+        self.hdr.addWidget(self.win_title)
+
+        # Live Pill
+        self.live_badge = QLabel("● LIVE")
+        self.live_badge.setFont(QFont("Segoe UI", 8, QFont.Bold))
+        self.live_badge.setStyleSheet("""
+            background: rgba(16, 185, 129, 0.20);
+            color: #34d399;
+            border: 1px solid rgba(52, 211, 153, 0.35);
+            padding: 2px 6px;
+            border-radius: 8px;
+        """)
+        self.hdr.addWidget(self.live_badge)
+
+        self.hdr.addStretch()
+
         # Pin Button
-        pin_bg = "#1e293b" if self.pinned else "#141c2c"
-        pin_col = "#38bdf8" if self.pinned else "#94a3b8"
-        self.round_poly(w - 76, 17, w - 46, 39, r=6, fill=pin_bg, outline="#2b3b55", width=1, tags="btn_pin")
-        self.canvas.create_text(w - 61, 28, text="📌", fill=pin_col, font=("Segoe UI Emoji", 10), tags="btn_pin")
-        
+        self.btn_pin = QPushButton("📌" if self.is_pinned else "📍")
+        self.btn_pin.setToolTip("Pin window (keep visible)")
+        self.btn_pin.setFixedSize(26, 26)
+        self.btn_pin.setCursor(Qt.PointingHandCursor)
+        self.btn_pin.setStyleSheet(self.get_pin_btn_style())
+        self.btn_pin.clicked.connect(self.toggle_pin)
+        self.hdr.addWidget(self.btn_pin)
+
         # Close Button
-        self.round_poly(w - 40, 17, w - 16, 39, r=6, fill="#141c2c", outline="#2b3b55", width=1, tags="btn_close")
-        self.canvas.create_text(w - 28, 28, text="✕", fill="#94a3b8", font=("Segoe UI", 10, "bold"), tags="btn_close")
-        
-        # Subtitle
-        sub_text = "Angepinnt • Bleibt als Widget offen" if self.pinned else "Floating Glass Widget • Multi-Border Resizable"
-        self.canvas.create_text(20, 48, text=sub_text, anchor="w", fill="#94a3b8", font=("Segoe UI", 8), tags="sub_lbl")
-        
-        # 3. Model Cards
-        card_h = max(160, int((h - 130) / 2))
-        y_card1 = 66
-        y_card2 = y_card1 + card_h + 10
-        
-        self.render_card(y_card1, card_h, "gemini", "Gemini Models", "Gemini Flash, Gemini Pro", "#38bdf8")
-        self.render_card(y_card2, card_h, "claude", "Claude & GPT Models", "Claude Opus, Claude Sonnet, GPT-OSS", "#f59e0b")
-        
-        # 4. Footer
-        y_footer = h - 26
-        status_txt = "Live synchronisiert" if (time.time() - self.last_successful_fetch <= 15 or self.last_successful_fetch == 0) else "Kein Signal (>15s)"
-        status_col = "#94a3b8" if (time.time() - self.last_successful_fetch <= 15 or self.last_successful_fetch == 0) else "#ef4444"
-        self.canvas.create_text(20, y_footer, text=status_txt, anchor="w", fill=status_col, font=("Segoe UI", 9), tags="status_txt")
-        
-        # Refresh Glass Button
-        self.round_poly(w - 128, y_footer - 16, w - 18, y_footer + 14, r=7, fill="#162032", outline="#2d3f5c", width=1, tags="btn_refresh")
-        self.canvas.create_line(w - 120, y_footer - 15, w - 26, y_footer - 15, fill="#3b5278", width=1)
-        refresh_label = "⌛ Lade..." if self.is_fetching else "Aktualisieren"
-        self.canvas.create_text(w - 73, y_footer, text=refresh_label, fill="#f8fafc", font=("Segoe UI", 9, "bold"), tags="btn_refresh")
+        btn_close = QPushButton("✕")
+        btn_close.setToolTip("Close to system tray")
+        btn_close.setFixedSize(26, 26)
+        btn_close.setCursor(Qt.PointingHandCursor)
+        btn_close.setStyleSheet("""
+            QPushButton {
+                background: rgba(255, 255, 255, 0.08);
+                color: #94a3b8;
+                border: 1px solid rgba(255, 255, 255, 0.12);
+                border-radius: 13px;
+                font-size: 11px;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background: rgba(239, 68, 68, 0.30);
+                color: #f87171;
+                border-color: rgba(239, 68, 68, 0.40);
+            }
+        """)
+        btn_close.clicked.connect(self.hide)
+        self.hdr.addWidget(btn_close)
 
-    def render_card(self, y, card_h, group_key, title, subtitle, badge_col):
-        w = self.win_width
-        
-        # Frosted glass card surface
-        self.round_poly(16, y, w - 16, y + card_h, r=16, fill="#131b2c", outline="#25354e", width=1, tags=f"card_{group_key}")
-        # Top glass reflection line
-        self.canvas.create_line(30, y + 1, w - 30, y + 1, fill="#334768", width=1)
-        
-        # Group Header
-        self.round_poly(28, y + 14, 38, y + 24, r=4, fill=badge_col)
-        self.canvas.create_text(46, y + 18, text=title, anchor="w", fill="#f8fafc", font=("Segoe UI", 11, "bold"))
-        self.canvas.create_text(46, y + 33, text=subtitle, anchor="w", fill="#94a3b8", font=("Segoe UI", 8))
-        
-        # Proportional vertical spacing
-        spacing_unit = (card_h - 40) / 4.0
-        
-        # --- 5h Limit ---
-        y_5h_lbl = int(y + 40 + spacing_unit * 0.4)
-        self.canvas.create_text(28, y_5h_lbl, text="5-Stunden-Limit", anchor="w", fill="#cbd5e1", font=("Segoe UI", 9, "bold"))
-        
-        # Cached values or placeholders
-        pct_5h = self.bucket_reset_targets.get(f"{group_key}_5h", {}).get("pct_str", "--%")
-        frac_5h = self.bucket_reset_targets.get(f"{group_key}_5h", {}).get("fraction", 1.0)
-        col_5h = get_color_for_fraction(frac_5h)
-        self.canvas.create_text(w - 28, y_5h_lbl, text=pct_5h, anchor="e", fill=col_5h, font=("Segoe UI", 13, "bold"), tags=f"{group_key}_5h_pct")
-        
-        # 5h Progress Bar (glowing pill)
-        y_5h_bar = int(y_5h_lbl + 16)
-        bar_w = w - 56
-        self.round_poly(28, y_5h_bar, w - 28, y_5h_bar + 8, r=4, fill="#0a0e18", outline="#1e2a3e", width=1)
-        fill_5h = max(4, int(bar_w * frac_5h))
-        self.round_poly(28, y_5h_bar, 28 + fill_5h, y_5h_bar + 8, r=4, fill=col_5h, tags=f"{group_key}_5h_bar")
-        
-        # 5h Reset countdown text
-        y_5h_rst = int(y_5h_bar + 18)
-        rst_5h = self.bucket_reset_targets.get(f"{group_key}_5h", {}).get("last_text", "Reset: --")
-        self.canvas.create_text(28, y_5h_rst, text=rst_5h, anchor="w", fill="#94a3b8", font=("Segoe UI", 9), tags=f"{group_key}_5h_rst")
-        
-        # Divider Line
-        y_div = int(y_5h_rst + 16)
-        self.canvas.create_line(28, y_div, w - 28, y_div, fill="#1c2638", width=1)
-        
-        # --- Weekly Limit ---
-        y_w_lbl = int(y_div + 16)
-        self.canvas.create_text(28, y_w_lbl, text="Wöchentliches Limit", anchor="w", fill="#cbd5e1", font=("Segoe UI", 9, "bold"))
-        
-        pct_w = self.bucket_reset_targets.get(f"{group_key}_weekly", {}).get("pct_str", "--%")
-        frac_w = self.bucket_reset_targets.get(f"{group_key}_weekly", {}).get("fraction", 1.0)
-        col_w = get_color_for_fraction(frac_w)
-        self.canvas.create_text(w - 28, y_w_lbl, text=pct_w, anchor="e", fill=col_w, font=("Segoe UI", 13, "bold"), tags=f"{group_key}_w_pct")
-        
-        # Weekly Progress Bar
-        y_w_bar = int(y_w_lbl + 16)
-        self.round_poly(28, y_w_bar, w - 28, y_w_bar + 8, r=4, fill="#0a0e18", outline="#1e2a3e", width=1)
-        fill_w = max(4, int(bar_w * frac_w))
-        self.round_poly(28, y_w_bar, 28 + fill_w, y_w_bar + 8, r=4, fill=col_w, tags=f"{group_key}_w_bar")
-        
-        # Weekly Reset countdown text
-        y_w_rst = int(y_w_bar + 18)
-        rst_w = self.bucket_reset_targets.get(f"{group_key}_weekly", {}).get("last_text", "Reset: --")
-        self.canvas.create_text(28, y_w_rst, text=rst_w, anchor="w", fill="#94a3b8", font=("Segoe UI", 9), tags=f"{group_key}_w_rst")
+        self.main_layout.addLayout(self.hdr)
 
-    def setup_resize_borders(self):
-        """Creates 8 border resize handles along all edges and corners."""
-        bs = 6
-        cs = 14
-        color = "#182234"
-        hover_color = "#38bdf8"
-        
-        self.resize_handles = []
-        
-        b_n = tk.Frame(self.root, bg=color, cursor="size_ns")
-        b_n.place(x=cs, y=0, relwidth=1.0, width=-(cs * 2), height=bs)
-        
-        b_s = tk.Frame(self.root, bg=color, cursor="size_ns")
-        b_s.place(x=cs, rely=1.0, y=-bs, relwidth=1.0, width=-(cs * 2), height=bs)
-        
-        b_w = tk.Frame(self.root, bg=color, cursor="size_we")
-        b_w.place(x=0, y=cs, relheight=1.0, height=-(cs * 2), width=bs)
-        
-        b_e = tk.Frame(self.root, bg=color, cursor="size_we")
-        b_e.place(relx=1.0, x=-bs, y=cs, relheight=1.0, height=-(cs * 2), width=bs)
-        
-        b_nw = tk.Frame(self.root, bg=color, cursor="size_nw_se")
-        b_nw.place(x=0, y=0, width=cs, height=cs)
-        
-        b_ne = tk.Frame(self.root, bg=color, cursor="size_ne_sw")
-        b_ne.place(relx=1.0, x=-cs, y=0, width=cs, height=cs)
-        
-        b_sw = tk.Frame(self.root, bg=color, cursor="size_ne_sw")
-        b_sw.place(x=0, rely=1.0, y=-cs, width=cs, height=cs)
-        
-        b_se = tk.Frame(self.root, bg=color, cursor="size_nw_se")
-        b_se.place(relx=1.0, x=-cs, rely=1.0, y=-cs, width=cs, height=cs)
-        
-        handles = [
-            (b_n, "n"), (b_s, "s"), (b_w, "w"), (b_e, "e"),
-            (b_nw, "nw"), (b_ne, "ne"), (b_sw, "sw"), (b_se, "se")
-        ]
-        
-        for widget, direction in handles:
-            widget.lift()
-            widget.bind("<Button-1>", lambda e, d=direction: self.start_resize(e, d))
-            widget.bind("<B1-Motion>", self.do_resize)
-            widget.bind("<ButtonRelease-1>", self.stop_resize)
-            widget.bind("<Enter>", lambda e, w=widget: w.config(bg=hover_color))
-            widget.bind("<Leave>", lambda e, w=widget: w.config(bg=color))
-            self.resize_handles.append(widget)
+        # --- Scrollable Content Area ---
+        self.scroll = QScrollArea()
+        self.scroll.setWidgetResizable(True)
+        self.scroll.setFrameShape(QFrame.NoFrame)
+        self.scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self.scroll.setStyleSheet("""
+            QScrollArea {
+                background: transparent;
+                border: none;
+            }
+            QScrollBar:vertical {
+                border: none;
+                background: transparent;
+                width: 5px;
+                margin: 2px 0px 2px 0px;
+            }
+            QScrollBar::handle:vertical {
+                background: rgba(255, 255, 255, 0.20);
+                border-radius: 2px;
+                min-height: 20px;
+            }
+            QScrollBar::handle:vertical:hover {
+                background: rgba(255, 255, 255, 0.35);
+            }
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
+                height: 0px;
+            }
+            QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {
+                background: transparent;
+            }
+        """)
 
-    def start_resize(self, event, direction):
-        self.is_resizing = True
-        self.mouse_is_down_inside = True
-        self.resize_direction = direction
-        self.resize_start_x = event.x_root
-        self.resize_start_y = event.y_root
-        self.resize_start_win_x = self.root.winfo_x()
-        self.resize_start_win_y = self.root.winfo_y()
-        self.resize_start_w = self.root.winfo_width()
-        self.resize_start_h = self.root.winfo_height()
+        container = QWidget()
+        container.setStyleSheet("background: transparent;")
+        self.cont_layout = QVBoxLayout(container)
+        self.cont_layout.setContentsMargins(0, 0, 2, 4)
+        self.cont_layout.setSpacing(10)
 
-    def do_resize(self, event):
-        if not self.is_resizing:
-            return
-        dx = event.x_root - self.resize_start_x
-        dy = event.y_root - self.resize_start_y
-        
-        new_w = self.resize_start_w
-        new_h = self.resize_start_h
-        new_x = self.resize_start_win_x
-        new_y = self.resize_start_win_y
-        
-        if "e" in self.resize_direction:
-            new_w = max(310, min(900, self.resize_start_w + dx))
-        elif "w" in self.resize_direction:
-            target_w = self.resize_start_w - dx
-            new_w = max(310, min(900, target_w))
-            new_x = self.resize_start_win_x + (self.resize_start_w - new_w)
-            
-        if "s" in self.resize_direction:
-            new_h = max(360, min(1000, self.resize_start_h + dy))
-        elif "n" in self.resize_direction:
-            target_h = self.resize_start_h - dy
-            new_h = max(360, min(1000, target_h))
-            new_y = self.resize_start_win_y + (self.resize_start_h - new_h)
-            
-        self.win_width = new_w
-        self.win_height = new_h
-        self.root.geometry(f"{new_w}x{new_h}+{new_x}+{new_y}")
-        self.canvas.config(width=new_w, height=new_h)
-        self.render_glass_ui()
+        # Card 1: Gemini Models
+        self.card_gemini = ResponsiveQuotaCard("Gemini Models", "PRO & FLASH", "#38bdf8", container)
+        self.cont_layout.addWidget(self.card_gemini)
 
-    def stop_resize(self, event):
-        if self.is_resizing:
-            self.is_resizing = False
-            self.mouse_is_down_inside = False
-            self.last_interaction_time = time.time()
-            self.config["win_width"] = self.win_width
-            self.config["win_height"] = self.win_height
-            save_config(self.config)
+        # Card 2: Claude & GPT Models
+        self.card_claude = ResponsiveQuotaCard("Claude & GPT", "OPUS & SONNET", "#fb923c", container)
+        self.cont_layout.addWidget(self.card_claude)
 
-    def bind_events(self):
-        # Window moving
-        def start_move(event):
-            # Check if clicked on interactive buttons
-            tags = self.canvas.gettags("current")
-            if "btn_close" in tags:
-                self.hide_window()
-                return
-            if "btn_pin" in tags:
-                self.toggle_pin()
-                return
-            if "btn_refresh" in tags:
-                self.trigger_refresh(silent=False)
-                return
-                
-            self.is_dragging = True
-            self.mouse_is_down_inside = True
-            self.drag_start_x = event.x_root
-            self.drag_start_y = event.y_root
-            self.win_start_x = self.root.winfo_x()
-            self.win_start_y = self.root.winfo_y()
+        self.cont_layout.addStretch()
+        self.scroll.setWidget(container)
+        self.main_layout.addWidget(self.scroll)
 
-        def do_move(event):
-            if not self.is_dragging:
-                return
-            dx = event.x_root - self.drag_start_x
-            dy = event.y_root - self.drag_start_y
-            new_x = self.win_start_x + dx
-            new_y = self.win_start_y + dy
-            self.root.geometry(f"{self.win_width}x{self.win_height}+{new_x}+{new_y}")
+        # --- Footer Bar ---
+        self.footer = QHBoxLayout()
+        self.lbl_status = QLabel("Live synchronized")
+        self.lbl_status.setFont(QFont("Segoe UI", 9))
+        self.lbl_status.setStyleSheet("color: #64748b;")
+        self.footer.addWidget(self.lbl_status)
 
-        def stop_move(event):
-            if self.is_dragging:
-                self.is_dragging = False
-                self.mouse_is_down_inside = False
-                self.last_interaction_time = time.time()
-                self.config["custom_pos"] = True
-                self.config["pos_x"] = self.root.winfo_x()
-                self.config["pos_y"] = self.root.winfo_y()
-                save_config(self.config)
+        self.footer.addStretch()
 
-        self.canvas.bind("<Button-1>", start_move)
-        self.canvas.bind("<B1-Motion>", do_move)
-        self.canvas.bind("<ButtonRelease-1>", stop_move)
-        self.canvas.bind("<Double-Button-1>", lambda e: self.reset_to_tray())
+        self.btn_refresh = QPushButton("↻ Refresh")
+        self.btn_refresh.setFont(QFont("Segoe UI", 9, QFont.DemiBold))
+        self.btn_refresh.setCursor(Qt.PointingHandCursor)
+        self.btn_refresh.setStyleSheet("""
+            QPushButton {
+                background: rgba(255, 255, 255, 0.08);
+                color: #e2e8f0;
+                border: 1px solid rgba(255, 255, 255, 0.14);
+                border-radius: 11px;
+                padding: 4px 12px;
+            }
+            QPushButton:hover {
+                background: rgba(255, 255, 255, 0.16);
+                border-color: rgba(255, 255, 255, 0.25);
+                color: #ffffff;
+            }
+            QPushButton:pressed {
+                background: rgba(255, 255, 255, 0.22);
+            }
+        """)
+        self.btn_refresh.clicked.connect(self.app_manager.trigger_refresh)
+        self.footer.addWidget(self.btn_refresh)
 
-        # Escape closes window
-        self.root.bind("<Escape>", lambda e: self.hide_window())
+        self.main_layout.addLayout(self.footer)
 
-    # Reliable check for clicking outside the window (30ms interval)
-    def _poll_click_outside(self):
-        if self.is_open and not self.pinned:
-            if self.is_dragging or self.is_resizing or self.mouse_is_down_inside:
-                self.root.after(30, self._poll_click_outside)
-                return
-            
-            if time.time() - self.open_timestamp < 0.3:
-                self.root.after(30, self._poll_click_outside)
-                return
-            if time.time() - self.last_interaction_time < 0.35:
-                self.root.after(30, self._poll_click_outside)
-                return
-
-            l_down = ctypes.windll.user32.GetAsyncKeyState(0x01) & 0x8000
-            r_down = ctypes.windll.user32.GetAsyncKeyState(0x02) & 0x8000
-            
-            if l_down or r_down:
-                pt = wintypes.POINT()
-                ctypes.windll.user32.GetCursorPos(ctypes.byref(pt))
-                wx = self.root.winfo_x()
-                wy = self.root.winfo_y()
-                ww = self.root.winfo_width()
-                wh = self.root.winfo_height()
-                
-                margin = 25
-                is_inside = (wx - margin <= pt.x <= wx + ww + margin) and (wy - margin <= pt.y <= wy + wh + margin)
-                
-                if is_inside:
-                    self.mouse_is_down_inside = True
-                else:
-                    self.hide_window()
-                    self.root.after(30, self._poll_click_outside)
-                    return
-            else:
-                self.mouse_is_down_inside = False
-
-        self.root.after(30, self._poll_click_outside)
-
-    # Listen for show event from second instance
-    def _poll_show_event(self):
-        global _show_event_handle
-        if _show_event_handle:
-            if ctypes.windll.kernel32.WaitForSingleObject(_show_event_handle, 0) == 0:
-                self.show_window()
-        self.root.after(100, self._poll_show_event)
-
-    # 1-second live ticker
-    def _tick_live(self):
-        now_ts = time.time()
-        
-        # 1. Update live countdown labels in real-time
-        if self.is_open:
-            self._update_countdown_labels()
-        
-        # 2. Check signal freshness
-        if self.last_successful_fetch > 0:
-            elapsed = now_ts - self.last_successful_fetch
-            if elapsed > 15:
-                try:
-                    self.canvas.itemconfigure("live_badge_bg", fill="#450a0a", outline="#ef4444")
-                    self.canvas.itemconfigure("live_badge_txt", text="● OFFLINE", fill="#ef4444")
-                    self.canvas.itemconfigure("status_txt", text="Kein Signal (>15s)", fill="#ef4444")
-                except Exception:
-                    pass
-            else:
-                try:
-                    self.canvas.itemconfigure("live_badge_bg", fill="#064e3b", outline="#10b981")
-                    self.canvas.itemconfigure("live_badge_txt", text="● LIVE", fill="#10b981")
-                    self.canvas.itemconfigure("status_txt", text="Live synchronisiert", fill="#94a3b8")
-                except Exception:
-                    pass
-        
-        # 3. Live Auto-Refresh logic:
-        interval = self.config.get("live_refresh_seconds", 10) if self.is_open else self.config.get("background_refresh_seconds", 60)
-        if not self.is_fetching and (now_ts - self.last_fetch_start >= interval):
-            self.trigger_refresh(silent=True)
-            
-        self.root.after(1000, self._tick_live)
-
-    def _update_countdown_labels(self):
-        for key, target_info in self.bucket_reset_targets.items():
-            target_dt = target_info.get("target_dt")
-            fraction = target_info.get("fraction", 1.0)
-            tag_name = target_info.get("tag")
-            if tag_name and target_dt:
-                countdown_text = format_countdown_seconds(target_dt, fraction)
-                target_info["last_text"] = countdown_text
-                try:
-                    self.canvas.itemconfigure(tag_name, text=countdown_text)
-                except Exception:
-                    pass
+    def get_pin_btn_style(self):
+        if self.is_pinned:
+            return """
+                QPushButton {
+                    background: rgba(56, 189, 248, 0.25);
+                    color: #38bdf8;
+                    border: 1px solid rgba(56, 189, 248, 0.50);
+                    border-radius: 13px;
+                    font-size: 12px;
+                }
+            """
+        else:
+            return """
+                QPushButton {
+                    background: rgba(255, 255, 255, 0.08);
+                    color: #94a3b8;
+                    border: 1px solid rgba(255, 255, 255, 0.12);
+                    border-radius: 13px;
+                    font-size: 12px;
+                }
+                QPushButton:hover {
+                    background: rgba(255, 255, 255, 0.16);
+                    color: #ffffff;
+                }
+            """
 
     def toggle_pin(self):
-        self.pinned = not self.pinned
-        self.config["pinned"] = self.pinned
+        self.is_pinned = not self.is_pinned
+        self.btn_pin.setText("📌" if self.is_pinned else "📍")
+        self.btn_pin.setStyleSheet(self.get_pin_btn_style())
+        self.config["pinned"] = self.is_pinned
         save_config(self.config)
-        self.render_glass_ui()
 
-    def reset_to_tray(self):
-        """Docks the window back above the system tray and restores standard size."""
-        self.config["custom_pos"] = False
-        self.config["pos_x"] = None
-        self.config["pos_y"] = None
-        self.win_width = 390
-        self.win_height = 520
-        self.config["win_width"] = 390
-        self.config["win_height"] = 520
-        save_config(self.config)
-        self.position_window()
-        self.render_glass_ui()
+    def showEvent(self, event):
+        super().showEvent(event)
+        apply_acrylic_blur(int(self.winId()))
+        self._just_shown = True
+        QTimer.singleShot(250, self._clear_just_shown)
 
-    def position_window(self):
-        left, top, right, bottom = get_work_area()
-        if self.config.get("custom_pos") and self.config.get("pos_x") is not None and self.config.get("pos_y") is not None:
-            x = int(self.config["pos_x"])
-            y = int(self.config["pos_y"])
-            x = max(left, min(right - self.win_width, x))
-            y = max(top, min(bottom - self.win_height, y))
-        else:
-            x = right - self.win_width - 12
-            y = bottom - self.win_height - 10
-        self.root.geometry(f"{self.win_width}x{self.win_height}+{x}+{y}")
+    def _clear_just_shown(self):
+        self._just_shown = False
 
-    def show_window(self):
-        self.position_window()
-        apply_dwm_styling(self.root)
-        self.root.deiconify()
-        self.root.lift()
-        self.root.focus_force()
-        self.is_open = True
-        self.open_timestamp = time.time()
-        
-        try:
-            top_hwnd = ctypes.windll.user32.GetParent(self.root.winfo_id()) or self.root.winfo_id()
-            ctypes.windll.user32.SetForegroundWindow(top_hwnd)
-        except Exception:
-            pass
-        
-        if self.last_successful_fetch == 0 or (time.time() - self.last_fetch_start > 5):
-            self.trigger_refresh(silent=True)
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
 
-    def hide_window(self):
-        self.is_open = False
-        self.mouse_is_down_inside = False
-        self.is_resizing = False
-        self.is_dragging = False
-        self.last_hide_time = time.time()
-        self.root.withdraw()
+        path = QPainterPath()
+        rect = QRectF(self.rect()).adjusted(1, 1, -1, -1)
+        # Deep smooth rounded corners (radius 28px)
+        path.addRoundedRect(rect, 28, 28)
 
-    def toggle_window(self):
-        if time.time() - self.last_hide_time < 0.35:
-            return
-        if self.is_open:
-            self.hide_window()
-        else:
-            self.show_window()
+        # Translucent dark frosted background fill
+        painter.fillPath(path, QColor(14, 20, 34, 165))
 
-    # Background Fetching & Updates
-    def trigger_refresh(self, silent=True):
-        if self.is_fetching:
-            return
-        self.is_fetching = True
-        self.last_fetch_start = time.time()
-        
-        if not silent:
-            try:
-                self.canvas.itemconfigure("btn_refresh", text="⌛ Lade...")
-            except Exception:
-                pass
+        # Thin elegant highlight border
+        pen = QPen(QColor(255, 255, 255, 42), 1.2)
+        painter.setPen(pen)
+        painter.drawPath(path)
+
+    def nativeEvent(self, eventType, message):
+        msg = wintypes.MSG.from_address(message.__int__())
+        WM_NCHITTEST = 0x0084
+
+        if msg.message == WM_NCHITTEST:
+            x = ctypes.c_short(msg.lParam & 0xFFFF).value
+            y = ctypes.c_short((msg.lParam >> 16) & 0xFFFF).value
             
-        threading.Thread(target=self._fetch_worker, daemon=True).start()
+            p = self.mapFromGlobal(QPoint(x, y))
+            w = self.width()
+            h = self.height()
+            bw = self.BORDER_WIDTH
 
-    def _fetch_worker(self):
-        data, err = fetch_usage_data()
-        self.post(self._on_fetch_complete, data, err)
+            # 4 Corners (Completely invisible to user - no indicators, no lines, no colors)
+            if p.x() <= bw and p.y() <= bw:
+                return True, 13  # HTTOPLEFT
+            elif p.x() >= w - bw and p.y() <= bw:
+                return True, 14  # HTTOPRIGHT
+            elif p.x() <= bw and p.y() >= h - bw:
+                return True, 16  # HTBOTTOMLEFT
+            elif p.x() >= w - bw and p.y() >= h - bw:
+                return True, 17  # HTBOTTOMRIGHT
+            
+            # 4 Edges
+            elif p.x() <= bw:
+                return True, 10  # HTLEFT
+            elif p.x() >= w - bw:
+                return True, 11  # HTRIGHT
+            elif p.y() <= bw:
+                return True, 12  # HTTOP
+            elif p.y() >= h - bw:
+                return True, 15  # HTBOTTOM
 
-    def _on_fetch_complete(self, data, err):
-        self.is_fetching = False
-        
-        if err or not data:
-            if time.time() - self.last_successful_fetch > 15:
-                try:
-                    self.canvas.itemconfigure("live_badge_bg", fill="#450a0a", outline="#ef4444")
-                    self.canvas.itemconfigure("live_badge_txt", text="● OFFLINE", fill="#ef4444")
-                    self.canvas.itemconfigure("status_txt", text="Kein Signal • Timeout", fill="#ef4444")
-                except Exception:
-                    pass
-            print(f"Fetch error: {err}")
-            return
-        
-        self.latest_data = data
-        self.last_successful_fetch = time.time()
-        
-        self.update_data_state(data)
-        self.render_glass_ui()
-        self.update_tray_state(data)
+            # Top header bar (Drag to move, except buttons)
+            if p.y() <= 46 and p.x() < (w - 75):
+                return True, 2   # HTCAPTION
 
-    def update_data_state(self, data):
+        return super().nativeEvent(eventType, message)
+
+    def changeEvent(self, event):
+        super().changeEvent(event)
+        # If user clicked outside and window lost activation, close automatically unless pinned
+        if event.type() == event.ActivationChange:
+            if not self._just_shown and not self.isActiveWindow() and not self.is_pinned:
+                self.hide()
+
+    def keyPressEvent(self, event):
+        if event.key() == Qt.Key_Escape:
+            self.hide()
+        else:
+            super().keyPressEvent(event)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        w = self.width()
+        h = self.height()
+
+        self.config["win_width"] = w
+        self.config["win_height"] = h
+        save_config(self.config)
+
+        # Responsive scale calculation:
+        # Base width is 360, base height is 480
+        # Scale ranges between 0.78 and 1.0 (capped so text never gets too large)
+        w_factor = w / 360.0
+        h_factor = h / 480.0
+        factor = min(w_factor, h_factor)
+        scale = max(0.75, min(1.0, factor))
+
+        # Update layouts
+        margin = max(10, int(16 * scale))
+        spacing = max(6, int(10 * scale))
+        self.main_layout.setContentsMargins(margin, margin, margin, margin)
+        self.main_layout.setSpacing(spacing)
+        self.cont_layout.setSpacing(spacing)
+
+        # Update cards
+        self.card_gemini.update_scaling(scale)
+        self.card_claude.update_scaling(scale)
+
+        # Responsive Header: avoid any collision
+        if w >= 340:
+            self.win_title.setText("Antigravity Quota")
+            self.win_title.setVisible(True)
+            self.live_badge.setVisible(True)
+        elif w >= 295:
+            self.win_title.setText("AG Quota")
+            self.win_title.setVisible(True)
+            self.live_badge.setVisible(True)
+        else:
+            self.win_title.setText("Quota")
+            self.win_title.setVisible(True)
+            self.live_badge.setVisible(False)
+
+        title_pt = max(9, int(12 * scale))
+        self.win_title.setFont(QFont("Segoe UI", title_pt, QFont.Bold))
+
+        # Status font
+        status_pt = max(7, int(9 * scale))
+        self.lbl_status.setFont(QFont("Segoe UI", status_pt))
+
+    def moveEvent(self, event):
+        super().moveEvent(event)
+        self.config["pos_x"] = self.x()
+        self.config["pos_y"] = self.y()
+        save_config(self.config)
+
+    def on_second_tick(self):
+        self.card_gemini.tick_second()
+        self.card_claude.tick_second()
+        diff = int(time.time() - self.last_sync_ts)
+        if diff < 5:
+            self.lbl_status.setText("Live synchronized")
+        else:
+            self.lbl_status.setText(f"Updated {diff}s ago")
+
+    def on_data_received(self, data):
+        self.last_sync_ts = time.time()
         groups = data.get("groups", [])
-        for group in groups:
-            g_name = group.get("name", "")
-            buckets = group.get("buckets", [])
-            
-            group_key = ""
-            if "Gemini" in g_name:
-                group_key = "gemini"
-            elif "Claude" in g_name or "GPT" in g_name:
-                group_key = "claude"
-            
-            if not group_key:
-                continue
-            
-            for b in buckets:
-                b_id = b.get("id", "")
-                frac = b.get("remaining_fraction", 1.0)
-                reset_iso = b.get("reset_time", "")
-                
-                target_dt = None
-                if reset_iso:
-                    try:
-                        clean_str = reset_iso.replace("Z", "+00:00")
-                        target_dt = datetime.fromisoformat(clean_str)
-                    except Exception:
-                        pass
-                
-                pct_str = f"{frac * 100:.1f}%"
-                
-                if "5h" in b_id:
-                    self.bucket_reset_targets[f"{group_key}_5h"] = {
-                        "tag": f"{group_key}_5h_rst",
-                        "pct_str": pct_str,
-                        "fraction": frac,
-                        "target_dt": target_dt,
-                        "last_text": format_countdown_seconds(target_dt, frac)
-                    }
-                elif "weekly" in b_id:
-                    self.bucket_reset_targets[f"{group_key}_weekly"] = {
-                        "tag": f"{group_key}_w_rst",
-                        "pct_str": pct_str,
-                        "fraction": frac,
-                        "target_dt": target_dt,
-                        "last_text": format_countdown_seconds(target_dt, frac)
-                    }
-
-    def update_tray_state(self, data):
-        if not self.tray_icon:
-            return
-        
         min_frac = 1.0
-        groups = data.get("groups", [])
-        for group in groups:
-            for b in group.get("buckets", []):
+
+        for g in groups:
+            name = g.get("name", "").lower()
+            buckets = g.get("buckets", [])
+            b_5h = next((b for b in buckets if b.get("window") == "5h"), None)
+            b_wk = next((b for b in buckets if b.get("window") == "weekly"), None)
+
+            for b in buckets:
                 frac = b.get("remaining_fraction", 1.0)
                 min_frac = min(min_frac, frac)
-        
-        self.tray_icon.title = "Antigravity Quota Monitor"
-        new_icon_img = create_tray_image(min_frac)
-        self.tray_icon.icon = new_icon_img
 
-    # Tray Menu (Right-Click Menu)
-    def create_tray_menu(self):
-        menu_items = [
-            item("📊 Dashboard öffnen", lambda *a: self.post(self.toggle_window), default=True),
-            item("🔄 Jetzt live aktualisieren", lambda *a: self.post(lambda: self.trigger_refresh(silent=False))),
-            item("📍 An Taskleiste andocken (Reset)", lambda *a: self.post(self.reset_to_tray)),
-            Menu.SEPARATOR,
-            item("🚀 Autostart mit Windows", self.toggle_autostart, checked=lambda item: is_autostart_enabled()),
-            Menu.SEPARATOR,
-            item("❌ Beenden", lambda *a: self.post(self.quit_app))
-        ]
-        return Menu(*menu_items)
+            if "gemini" in name:
+                self.card_gemini.update_data(b_5h, b_wk)
+            elif "claude" in name or "gpt" in name or "3p" in name:
+                self.card_claude.update_data(b_5h, b_wk)
 
-    def toggle_autostart(self, *args):
-        now_enabled = is_autostart_enabled()
-        set_autostart(not now_enabled)
+        self.app_manager.update_tray_icon(min_frac)
 
-    def init_tray_icon(self):
-        initial_img = create_tray_image(1.0)
-        self.tray_icon = pystray.Icon(
-            "AntigravityQuota",
-            initial_img,
-            title="Antigravity Quota Monitor",
-            menu=self.create_tray_menu()
-        )
-        self.tray_icon.run_detached()
+# Main Application Controller
+class AppManager(QObject):
+    def __init__(self, app):
+        super().__init__()
+        self.app = app
+        self.config = load_config()
+
+        # Locate agy.exe
+        self.agy_path = shutil.which("agy") or shutil.which("agy.exe")
+        if not self.agy_path:
+            local_bin = os.path.expanduser(r"~\AppData\Local\Programs\antigravity-cli\bin\agy.exe")
+            if os.path.exists(local_bin):
+                self.agy_path = local_bin
+            else:
+                self.agy_path = "agy"
+
+        # Setup System Tray Icon
+        self.tray = QSystemTrayIcon()
+        self.update_tray_icon(1.0)
+        self.tray.setToolTip("Antigravity Quota Monitor")
+        self.tray.activated.connect(self.on_tray_activated)
+
+        # Context Menu
+        self.menu = QMenu()
+        self.menu.setStyleSheet("""
+            QMenu {
+                background: #1e293b;
+                color: #f1f5f9;
+                border: 1px solid rgba(255, 255, 255, 0.12);
+                border-radius: 8px;
+                padding: 4px;
+            }
+            QMenu::item {
+                padding: 6px 20px 6px 12px;
+                border-radius: 4px;
+            }
+            QMenu::item:selected {
+                background: #3b82f6;
+                color: #ffffff;
+            }
+            QMenu::separator {
+                height: 1px;
+                background: rgba(255, 255, 255, 0.10);
+                margin: 4px 6px;
+            }
+        """)
+
+        act_open = QAction("Open Dashboard", self.menu)
+        act_open.triggered.connect(self.show_window)
+        self.menu.addAction(act_open)
+
+        act_refresh = QAction("Refresh Now", self.menu)
+        act_refresh.triggered.connect(self.trigger_refresh)
+        self.menu.addAction(act_refresh)
+
+        self.menu.addSeparator()
+
+        self.act_autostart = QAction("Start with Windows", self.menu)
+        self.act_autostart.setCheckable(True)
+        self.act_autostart.setChecked(is_autostart_enabled())
+        self.act_autostart.triggered.connect(self.toggle_autostart)
+        self.menu.addAction(self.act_autostart)
+
+        self.menu.addSeparator()
+
+        act_quit = QAction("Exit", self.menu)
+        act_quit.triggered.connect(self.quit_app)
+        self.menu.addAction(act_quit)
+
+        self.tray.setContextMenu(self.menu)
+        self.tray.show()
+
+        # Create Window
+        self.window = GlassWindow(self)
+
+        # Background Fetch Timer
+        self.bg_timer = QTimer(self)
+        self.bg_timer.timeout.connect(self.on_bg_timer)
+        self.bg_timer.start(self.config.get("background_refresh_seconds", 60) * 1000)
+
+        # Initial fetch
+        self.trigger_refresh()
+
+        # If not minimized on launch, show
+        if "--minimized" not in sys.argv:
+            self.show_window()
+
+    def update_tray_icon(self, fraction):
+        pixmap = create_tray_pixmap(fraction)
+        self.tray.setIcon(QIcon(pixmap))
+
+    def on_tray_activated(self, reason):
+        if reason == QSystemTrayIcon.Trigger: # Left click
+            if self.window.isVisible():
+                self.window.hide()
+            else:
+                self.show_window()
+
+    def show_window(self):
+        self.window.show()
+        self.window.raise_()
+        self.window.activateWindow()
+        apply_acrylic_blur(int(self.window.winId()))
+        # Fast live refresh when window opens
+        self.trigger_refresh()
+
+    def toggle_autostart(self):
+        current = self.act_autostart.isChecked()
+        success = set_autostart(current)
+        if not success:
+            self.act_autostart.setChecked(not current)
+
+    def trigger_refresh(self):
+        threading.Thread(target=self._fetch_worker, daemon=True).start()
+
+    def on_bg_timer(self):
+        # Refresh faster if window is open
+        if self.window.isVisible():
+            self.trigger_refresh()
+        else:
+            self.trigger_refresh()
+
+    def _fetch_worker(self):
+        try:
+            CREATE_NO_WINDOW = 0x08000000
+            res = subprocess.run(
+                [self.agy_path, "-p", "/usage", "--output-format", "json"],
+                capture_output=True,
+                text=True,
+                timeout=12,
+                creationflags=CREATE_NO_WINDOW
+            )
+            if res.returncode == 0 and res.stdout:
+                parsed = json.loads(res.stdout)
+                cmd_data = parsed.get("command", {}).get("data", {})
+                if cmd_data:
+                    self.window.data_received.emit(cmd_data)
+        except Exception as e:
+            pass
 
     def quit_app(self):
-        global _show_event_handle, _mutex_handle
-        if self.tray_icon:
-            self.tray_icon.stop()
-        if _show_event_handle:
-            try:
-                ctypes.windll.kernel32.CloseHandle(_show_event_handle)
-            except Exception:
-                pass
-            _show_event_handle = None
-        if _mutex_handle:
-            try:
-                ctypes.windll.kernel32.CloseHandle(_mutex_handle)
-            except Exception:
-                pass
-            _mutex_handle = None
-        self.root.after(0, self.root.destroy)
+        self.tray.hide()
+        self.app.quit()
 
-    def run(self):
-        self.root.mainloop()
-
-# Single Instance Check via Windows Mutex + Show Event IPC
-SHOW_EVENT_NAME = "AntigravityQuotaTray_ShowEvent"
-_show_event_handle = None
-
+# Single Instance Check
 def check_single_instance():
     global _mutex_handle, _show_event_handle
+    kernel32 = ctypes.windll.kernel32
     ERROR_ALREADY_EXISTS = 183
-    _mutex_handle = ctypes.windll.kernel32.CreateMutexW(None, False, MUTEX_NAME)
-    last_error = ctypes.windll.kernel32.GetLastError()
-    if last_error == ERROR_ALREADY_EXISTS:
-        evt = ctypes.windll.kernel32.OpenEventW(0x0002, False, SHOW_EVENT_NAME)
-        if evt:
-            ctypes.windll.kernel32.SetEvent(evt)
-            ctypes.windll.kernel32.CloseHandle(evt)
+
+    _mutex_handle = kernel32.CreateMutexW(None, False, MUTEX_NAME)
+    last_err = kernel32.GetLastError()
+    if last_err == ERROR_ALREADY_EXISTS:
+        # Signal existing instance to show
+        event_handle = kernel32.OpenEventW(0x0002, False, SHOW_EVENT_NAME)
+        if event_handle:
+            kernel32.SetEvent(event_handle)
+            kernel32.CloseHandle(event_handle)
         return False
-    
-    _show_event_handle = ctypes.windll.kernel32.CreateEventW(None, False, False, SHOW_EVENT_NAME)
+
+    _show_event_handle = kernel32.CreateEventW(None, False, False, SHOW_EVENT_NAME)
     return True
 
+def start_show_event_listener(app_manager):
+    def listener():
+        kernel32 = ctypes.windll.kernel32
+        while True:
+            res = kernel32.WaitForSingleObject(_show_event_handle, 0xFFFFFFFF)
+            if res == 0:  # WAIT_OBJECT_0
+                QTimer.singleShot(0, app_manager.show_window)
+    t = threading.Thread(target=listener, daemon=True)
+    t.start()
+
 def main():
-    try:
-        ok = check_single_instance()
-        if not ok:
-            with open(os.path.join(APP_DIR, "agy_tray.log"), "a", encoding="utf-8") as f:
-                f.write(f"[{datetime.now().isoformat()}] Bereits eine Instanz aktiv.\n")
-            sys.exit(0)
-        
-        with open(os.path.join(APP_DIR, "agy_tray.log"), "a", encoding="utf-8") as f:
-            f.write(f"[{datetime.now().isoformat()}] App wird gestartet...\n")
-            
-        app = QuotaApp()
-        app.run()
-    except Exception as e:
-        import traceback
-        with open(os.path.join(APP_DIR, "agy_tray.log"), "a", encoding="utf-8") as f:
-            f.write(f"[{datetime.now().isoformat()}] Fehler:\n{traceback.format_exc()}\n")
+    if not check_single_instance():
+        sys.exit(0)
+
+    app = QApplication(sys.argv)
+    app.setQuitOnLastWindowClosed(False)
+
+    manager = AppManager(app)
+    start_show_event_listener(manager)
+
+    sys.exit(app.exec_())
 
 if __name__ == "__main__":
     main()
