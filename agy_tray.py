@@ -28,10 +28,33 @@ import time
 import shutil
 import ctypes
 import threading
+from ctypes import wintypes
+
+# Ensure process and all spawned threads attach to the interactive user desktop ('Default')
+# This guarantees that the tray icon and floating window appear on the user's real desktop
+# even if launched from a service, background scheduler, or isolated subprocess desktop.
+def ensure_default_desktop():
+    try:
+        user32 = ctypes.windll.user32
+        hDesk = user32.OpenDesktopW("Default", 0, False, 0x01FF)
+        if hDesk:
+            user32.SetThreadDesktop(hDesk)
+            orig_run = threading.Thread.run
+            def desktop_thread_run(self):
+                try:
+                    user32.SetThreadDesktop(hDesk)
+                except Exception:
+                    pass
+                return orig_run(self)
+            threading.Thread.run = desktop_thread_run
+    except Exception:
+        pass
+
+ensure_default_desktop()
+
 import queue
 import winreg
 from datetime import datetime, timezone
-from ctypes import wintypes
 import subprocess
 import tkinter as tk
 from PIL import Image, ImageDraw, ImageFont
@@ -135,6 +158,31 @@ def set_autostart(enable: bool):
         print(f"Autostart Error: {e}")
         return False
 
+# Ensure Tray Icon is Promoted (Visible on Taskbar in Windows 11)
+def ensure_promoted_in_tray():
+    """Ensure Windows 11 shows the icon on the main taskbar rather than hiding it in the ^ overflow menu."""
+    try:
+        base_key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Control Panel\NotifyIconSettings", 0, winreg.KEY_READ | winreg.KEY_WRITE)
+        i = 0
+        while True:
+            try:
+                subkey_name = winreg.EnumKey(base_key, i)
+                i += 1
+                subkey = winreg.OpenKey(base_key, subkey_name, 0, winreg.KEY_READ | winreg.KEY_WRITE)
+                try:
+                    exe_val, _ = winreg.QueryValueEx(subkey, "ExecutablePath")
+                    if any(p in exe_val.lower() for p in ("python", "agy_tray")):
+                        winreg.SetValueEx(subkey, "IsPromoted", 0, winreg.REG_DWORD, 1)
+                except Exception:
+                    pass
+                finally:
+                    winreg.CloseKey(subkey)
+            except OSError:
+                break
+        winreg.CloseKey(base_key)
+    except Exception:
+        pass
+
 # Locate agy.exe
 def get_agy_path():
     path = shutil.which("agy")
@@ -230,11 +278,11 @@ def create_tray_image(min_fraction=1.0):
     image = Image.new("RGBA", (size, size), (0, 0, 0, 0))
     draw = ImageDraw.Draw(image)
     
-    # Outer background circle
-    draw.ellipse((4, 4, 60, 60), fill=(24, 24, 27, 245))
+    # Outer circle backing: Deep slate blue (#0f172a) with subtle border (#334155)
+    draw.ellipse((3, 3, 60, 60), fill=(15, 23, 42, 255), outline=(51, 65, 85, 255), width=2)
     
     # Track ring
-    draw.ellipse((5, 5, 59, 59), outline=(63, 63, 70, 180), width=4)
+    draw.ellipse((5, 5, 58, 58), outline=(51, 65, 85, 255), width=4)
     
     # Progress Arc
     color_hex = get_color_for_fraction(min_fraction)
@@ -242,12 +290,12 @@ def create_tray_image(min_fraction=1.0):
     rgb = tuple(int(h[i:i+2], 16) for i in (0, 2, 4))
     
     # Sweep angle
-    sweep = max(10, int(min_fraction * 360))
-    draw.arc((5, 5, 59, 59), start=-90, end=-90 + sweep, fill=(*rgb, 255), width=5)
+    sweep = max(15, int(min_fraction * 360))
+    draw.arc((5, 5, 58, 58), start=-90, end=-90 + sweep, fill=(*rgb, 255), width=5)
     
     # Center text "AG"
     try:
-        font = ImageFont.truetype("segoeuib.ttf", 22)
+        font = ImageFont.truetype("segoeuib.ttf", 24)
     except Exception:
         font = ImageFont.load_default()
     
@@ -256,7 +304,7 @@ def create_tray_image(min_fraction=1.0):
     th = bbox[3] - bbox[1]
     tx = (size - tw) // 2
     ty = (size - th) // 2 - 2
-    draw.text((tx, ty), "AG", fill=(244, 244, 245, 255), font=font)
+    draw.text((tx, ty), "AG", fill=(255, 255, 255, 255), font=font)
     
     return image
 
@@ -360,9 +408,12 @@ class QuotaApp:
         # Start queue poller
         self._process_queue()
         
-        # Tray Icon setup - TITLE IS EMPTY so hover does NOT display any tooltip!
+        # Tray Icon setup
         self.tray_icon = None
         self.init_tray_icon()
+        
+        # Ensure icon is pinned to visible taskbar in Windows 11
+        self.root.after(1000, ensure_promoted_in_tray)
         
         # Fast click-outside polling loop (runs every 25ms)
         self._poll_click_outside()
@@ -370,8 +421,16 @@ class QuotaApp:
         # 1-second live ticker
         self._tick_live()
         
+        # Show Event IPC listener (allows desktop shortcut or start.bat to bring window to front)
+        self._poll_show_event()
+        
         # Initial data fetch
         self.trigger_refresh()
+
+        # Open floating window on launch so user gets instant visual confirmation
+        # (Pass --minimized or --silent to keep in tray only, e.g. for Windows boot autostart)
+        if "--minimized" not in sys.argv and "--silent" not in sys.argv:
+            self.root.after(300, self.show_window)
 
     def post(self, callback, *args, **kwargs):
         """Thread-safe dispatch to the Tkinter main loop."""
@@ -714,16 +773,16 @@ class QuotaApp:
                     self.hide_window()
                     self.root.after(25, self._poll_click_outside)
                     return
-            
-            # Check if foreground window switched to another app
-            fg = ctypes.windll.user32.GetForegroundWindow()
-            top_hwnd = ctypes.windll.user32.GetParent(self.root.winfo_id()) or self.root.winfo_id()
-            if fg != 0 and fg != top_hwnd and fg != self.root.winfo_id():
-                self.hide_window()
-                self.root.after(25, self._poll_click_outside)
-                return
 
         self.root.after(25, self._poll_click_outside)
+
+    # Listen for show event from second instance (e.g. user clicked desktop shortcut again)
+    def _poll_show_event(self):
+        global _show_event_handle
+        if _show_event_handle:
+            if ctypes.windll.kernel32.WaitForSingleObject(_show_event_handle, 0) == 0:
+                self.show_window()
+        self.root.after(100, self._poll_show_event)
 
     # 1-second live ticker
     def _tick_live(self):
@@ -933,8 +992,8 @@ class QuotaApp:
                 frac = b.get("remaining_fraction", 1.0)
                 min_frac = min(min_frac, frac)
         
-        # Ensure title stays EMPTY so hovering does nothing!
-        self.tray_icon.title = ""
+        # Set descriptive title so Windows recognizes and displays it
+        self.tray_icon.title = "Antigravity Quota Monitor"
         
         # Update Icon Ring Gauge
         new_icon_img = create_tray_image(min_frac)
@@ -959,31 +1018,54 @@ class QuotaApp:
 
     def init_tray_icon(self):
         initial_img = create_tray_image(1.0)
-        # title="" ensures that hovering over the tray icon does NOT show any tooltip!
         self.tray_icon = pystray.Icon(
             "AntigravityQuota",
             initial_img,
-            title="",
+            title="Antigravity Quota Monitor",
             menu=self.create_tray_menu()
         )
         self.tray_icon.run_detached()
 
     def quit_app(self):
+        global _show_event_handle, _mutex_handle
         if self.tray_icon:
             self.tray_icon.stop()
+        if _show_event_handle:
+            try:
+                ctypes.windll.kernel32.CloseHandle(_show_event_handle)
+            except Exception:
+                pass
+            _show_event_handle = None
+        if _mutex_handle:
+            try:
+                ctypes.windll.kernel32.CloseHandle(_mutex_handle)
+            except Exception:
+                pass
+            _mutex_handle = None
         self.root.after(0, self.root.destroy)
 
     def run(self):
         self.root.mainloop()
 
-# Single Instance Check via Windows Mutex
+# Single Instance Check via Windows Mutex + Show Event IPC
+SHOW_EVENT_NAME = "AntigravityQuotaTray_ShowEvent"
+_show_event_handle = None
+
 def check_single_instance():
-    global _mutex_handle
+    global _mutex_handle, _show_event_handle
     ERROR_ALREADY_EXISTS = 183
     _mutex_handle = ctypes.windll.kernel32.CreateMutexW(None, False, MUTEX_NAME)
     last_error = ctypes.windll.kernel32.GetLastError()
     if last_error == ERROR_ALREADY_EXISTS:
+        # A running instance already exists! Signal it to bring its window to the front
+        evt = ctypes.windll.kernel32.OpenEventW(0x0002, False, SHOW_EVENT_NAME)
+        if evt:
+            ctypes.windll.kernel32.SetEvent(evt)
+            ctypes.windll.kernel32.CloseHandle(evt)
         return False
+    
+    # First instance: create the show event
+    _show_event_handle = ctypes.windll.kernel32.CreateEventW(None, False, False, SHOW_EVENT_NAME)
     return True
 
 def main():

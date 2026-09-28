@@ -72,6 +72,10 @@ pip install -r requirements.txt
 | **Echtzeit-Aktualisierung** | Solange das Dashboard geöffnet ist, aktualisiert es sich alle 10 Sekunden automatisch (oder sofort per Klick auf `🔄`). |
 | **Rechtsklick auf Tray-Icon** | Öffnet das Kontextmenü mit Optionen wie *Dashboard öffnen*, *Jetzt live aktualisieren*, *Autostart mit Windows* und *Beenden*. |
 
+> **💡 Tipp für Windows 11:** Falls das Icon nach dem Start nicht direkt neben der Uhr sichtbar ist, klicke auf den kleinen Pfeil nach oben (`^` für ausgeblendete Symbole). Du kannst das `AG`-Icon einfach mit gedrückter linker Maustaste auf deine sichtbare Taskleiste herausziehen.
+>
+> **💡 Tipp zur Desktop-Verknüpfung:** Ein Doppelklick auf die Verknüpfung "Antigravity Quota Monitor" öffnet das Dashboard sofort direkt auf deinem Bildschirm – auch wenn das Tool bereits im Hintergrund im Tray aktiv ist.
+
 ---
 
 ## ⚙️ Autostart mit Windows
