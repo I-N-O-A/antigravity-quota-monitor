@@ -1,8 +1,9 @@
 """
 Antigravity Quota Monitor - Windows System Tray Utility
 Monitors API limits and quotas for Gemini and Claude/GPT model groups in real-time.
-Built with PyQt5 for native Windows 11 frosted acrylic glass, smooth anti-aliased
-rounded corners (radius 28px), seamless non-client edge resizing, and responsive content scaling.
+1:1 Pixel-Perfect Replica of the Dark Frosted Acrylic Glass UI with smooth 26px rounded corners,
+interactive instance switching, real-time live countdowns, seamless non-client resizing,
+responsive typography, and system tray integration.
 """
 
 import os
@@ -32,9 +33,10 @@ import threading
 import winreg
 from datetime import datetime, timezone
 import subprocess
+import webbrowser
 
 from PyQt5.QtCore import Qt, QTimer, QPoint, QRectF, QSize, pyqtSignal, QObject
-from PyQt5.QtGui import QPainter, QColor, QPainterPath, QPen, QFont, QIcon, QPixmap, QCursor
+from PyQt5.QtGui import QPainter, QColor, QPainterPath, QPen, QFont, QIcon, QPixmap, QCursor, QLinearGradient
 from PyQt5.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QPushButton, QProgressBar, QFrame, QScrollArea, QSystemTrayIcon,
@@ -69,7 +71,7 @@ class WINDOWCOMPOSITIONATTRIBDATA(ctypes.Structure):
         ("SizeOfData", ctypes.c_size_t),
     ]
 
-def apply_acrylic_blur(hwnd, color=0xA0140F0A):
+def apply_acrylic_blur(hwnd, color=0x6018120B):
     """
     Apply native Windows 11 Acrylic blur behind window.
     GradientColor is 0xAABBGGRR.
@@ -86,7 +88,7 @@ def apply_acrylic_blur(hwnd, color=0xA0140F0A):
         val_border = ctypes.c_uint32(0xFFFFFFFE)
         dwmapi.DwmSetWindowAttribute(hwnd, 34, ctypes.byref(val_border), 4)
 
-        # Do not round DWM bounding rect (DWMWCP_DONOTROUND = 1) so Qt's smooth 28px radius shines without extra outlines
+        # Do not round DWM bounding rect (DWMWCP_DONOTROUND = 1) so Qt's smooth rounded corners shine
         val_corner = ctypes.c_int(1)
         dwmapi.DwmSetWindowAttribute(hwnd, 33, ctypes.byref(val_corner), 4)
 
@@ -118,10 +120,12 @@ DEFAULT_CONFIG = {
     "background_refresh_seconds": 60,
     "live_refresh_seconds": 10,
     "pinned": False,
-    "win_width": 360,
-    "win_height": 500,
+    "win_width": 390,
+    "win_height": 485,
     "pos_x": None,
-    "pos_y": None
+    "pos_y": None,
+    "account_email": "ka***e@g***l.com",
+    "tier_badge": "PLUS"
 }
 
 def load_config():
@@ -195,12 +199,12 @@ def create_tray_pixmap(min_fraction=1.0):
     painter.strokePath(path_track, QPen(QColor(51, 65, 85, 180), 3.5))
 
     # Color for quota
-    if min_fraction > 0.5:
+    if min_fraction >= 0.8:
         color = QColor(52, 211, 153)  # Emerald green
-    elif min_fraction > 0.2:
-        color = QColor(251, 191, 36)  # Amber
+    elif min_fraction >= 0.25:
+        color = QColor(245, 158, 11)  # Warm Amber
     else:
-        color = QColor(248, 113, 113) # Coral red
+        color = QColor(239, 68, 68)   # Coral red
 
     # Progress Arc
     span_angle = int(max(0.04, min(1.0, min_fraction)) * 360 * 16)
@@ -218,8 +222,8 @@ def create_tray_pixmap(min_fraction=1.0):
     painter.end()
     return pixmap
 
-# Helper to format countdown
-def format_countdown(reset_time_str):
+# Helper to format countdown exactly matching reference
+def format_ref_countdown(reset_time_str):
     if not reset_time_str:
         return "100% available"
     try:
@@ -227,195 +231,146 @@ def format_countdown(reset_time_str):
         target = datetime.fromisoformat(t_clean)
         now = datetime.now(timezone.utc)
         diff = (target - now).total_seconds()
+        local_time = target.astimezone()
+        local_str = local_time.strftime("%m/%d %H:%M")
         if diff <= 0:
-            return "100% refreshed"
+            return f"100% refreshed ({local_str})"
         d = int(diff // 86400)
         h = int((diff % 86400) // 3600)
         m = int((diff % 3600) // 60)
         s = int(diff % 60)
-        
-        # Local reset time string
-        local_time = target.astimezone()
-        local_str = local_time.strftime("%m/%d %H:%M")
-
         if d > 0:
-            return f"Reset in {d}d {h}h ({local_str})"
+            return f"{d}d {h}h {m}m ({local_str})"
         elif h > 0:
-            return f"Reset in {h}h {m}m {s:02d}s ({local_str})"
+            return f"{h}h {m}m ({local_str})"
         else:
-            return f"Reset in {m}m {s:02d}s ({local_str})"
+            return f"{m}m {s:02d}s ({local_str})"
     except Exception:
-        return "Reset in progress"
+        return reset_time_str
 
-# Responsive Quota Card Widget
-class ResponsiveQuotaCard(QFrame):
-    def __init__(self, group_name, badge_text, accent_color, parent=None):
+# Clean Vector Logo Widget
+class ReferenceLogo(QWidget):
+    def __init__(self, parent=None):
         super().__init__(parent)
-        self.accent_color = accent_color
-        self.group_name = group_name
-        self.badge_text = badge_text
-        self.setObjectName("quotaCard")
-        self.setStyleSheet("""
-            #quotaCard {
-                background: rgba(255, 255, 255, 0.05);
-                border: 1px solid rgba(255, 255, 255, 0.10);
-                border-radius: 18px;
-            }
-        """)
+        self.setFixedSize(28, 28)
 
-        self.layout = QVBoxLayout(self)
-        self.layout.setContentsMargins(16, 14, 16, 14)
-        self.layout.setSpacing(8)
+    def paintEvent(self, event):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        pen = QPen(QColor(255, 255, 255, 225), 1.5)
+        pen.setCapStyle(Qt.RoundCap)
+        pen.setJoinStyle(Qt.RoundJoin)
+        p.setPen(pen)
 
-        # Header Row
-        self.hdr = QHBoxLayout()
-        self.hdr.setSpacing(6)
+        cx, cy = 14.0, 14.0
+        p.translate(cx, cy)
+        
+        for i in range(6):
+            p.save()
+            p.rotate(i * 60)
+            path = QPainterPath()
+            path.moveTo(0, -11)
+            path.cubicTo(4.5, -11, 7.5, -7.5, 7.5, -3)
+            path.cubicTo(7.5, 1.5, 4.0, 4.5, 0, 4.5)
+            p.drawPath(path)
+            p.restore()
 
-        self.dot = QLabel("●")
-        self.dot.setStyleSheet(f"color: {accent_color}; font-size: 11px;")
-        self.hdr.addWidget(self.dot)
+# Slashed Pin Icon Widget
+class SlashedPinIcon(QWidget):
+    def __init__(self, pinned=False, parent=None):
+        super().__init__(parent)
+        self.pinned = pinned
+        self.setFixedSize(18, 18)
 
-        self.title = QLabel(group_name)
-        self.title.setFont(QFont("Segoe UI", 11, QFont.Bold))
-        self.title.setStyleSheet("color: #ffffff;")
-        self.hdr.addWidget(self.title)
+    def setPinned(self, p):
+        self.pinned = p
+        self.update()
 
-        self.hdr.addStretch()
+    def paintEvent(self, event):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        pen = QPen(QColor(255, 255, 255, 210), 1.6)
+        pen.setCapStyle(Qt.RoundCap)
+        pen.setJoinStyle(Qt.RoundJoin)
+        p.setPen(pen)
 
-        self.badge = QLabel(badge_text)
-        self.badge.setFont(QFont("Segoe UI", 8, QFont.Bold))
-        self.badge.setStyleSheet(f"""
-            background: rgba(255, 255, 255, 0.08);
-            color: {accent_color};
-            border: 1px solid rgba(255, 255, 255, 0.12);
-            padding: 2px 7px;
-            border-radius: 6px;
-        """)
-        self.hdr.addWidget(self.badge)
+        p.drawLine(9, 3, 9, 9)
+        p.drawLine(5, 9, 13, 9)
+        p.drawLine(9, 9, 9, 15)
 
-        self.layout.addLayout(self.hdr)
+        if not self.pinned:
+            pen_slash = QPen(QColor(255, 255, 255, 190), 1.6)
+            pen_slash.setCapStyle(Qt.RoundCap)
+            p.setPen(pen_slash)
+            p.drawLine(4, 14, 14, 4)
 
-        # 5h Row
-        self.r1 = QHBoxLayout()
-        self.lbl_5h = QLabel("5h")
-        self.lbl_5h.setFont(QFont("Segoe UI", 10, QFont.Bold))
-        self.lbl_5h.setStyleSheet("color: #94a3b8;")
-        self.val_5h = QLabel("--%")
-        self.val_5h.setFont(QFont("Segoe UI", 11, QFont.Bold))
-        self.val_5h.setStyleSheet("color: #34d399;")
-        self.r1.addWidget(self.lbl_5h)
-        self.r1.addStretch()
-        self.r1.addWidget(self.val_5h)
-        self.layout.addLayout(self.r1)
+def create_back_icon(color=QColor(255, 255, 255), size=18):
+    pix = QPixmap(size, size)
+    pix.fill(Qt.transparent)
+    p = QPainter(pix)
+    p.setRenderHint(QPainter.Antialiasing)
+    pen = QPen(color, 1.8)
+    pen.setCapStyle(Qt.RoundCap)
+    pen.setJoinStyle(Qt.RoundJoin)
+    p.setPen(pen)
 
-        self.bar_5h = QProgressBar()
-        self.bar_5h.setFixedHeight(6)
-        self.bar_5h.setTextVisible(False)
-        self.bar_5h.setValue(100)
-        self.set_bar_color(self.bar_5h, "#34d399")
-        self.layout.addWidget(self.bar_5h)
+    path = QPainterPath()
+    path.moveTo(6.5, 2.0)
+    path.lineTo(3.0, 5.0)
+    path.lineTo(6.5, 8.0)
+    
+    path.moveTo(3.5, 5.0)
+    path.cubicTo(6.5, 1.5, 14.0, 1.5, 14.0, 6.5)
+    path.cubicTo(14.0, 10.5, 11.5, 10.5, 7.5, 10.5)
+    p.drawPath(path)
+    p.end()
+    return QIcon(pix)
 
-        self.time_5h = QLabel("Loading...")
-        self.time_5h.setFont(QFont("Segoe UI", 8))
-        self.time_5h.setStyleSheet("color: #64748b;")
-        self.layout.addWidget(self.time_5h)
+def create_refresh_icon(color=QColor(203, 213, 225), size=18):
+    pix = QPixmap(size, size)
+    pix.fill(Qt.transparent)
+    p = QPainter(pix)
+    p.setRenderHint(QPainter.Antialiasing)
+    pen = QPen(color, 1.8)
+    pen.setCapStyle(Qt.RoundCap)
+    pen.setJoinStyle(Qt.RoundJoin)
+    p.setPen(pen)
 
-        self.layout.addSpacing(3)
+    p.drawArc(QRectF(3.0, 3.0, 12.0, 12.0), 30 * 16, 280 * 16)
+    path = QPainterPath()
+    path.moveTo(9.5, 1.5)
+    path.lineTo(13.5, 3.5)
+    path.lineTo(12.5, 7.5)
+    p.drawPath(path)
+    p.end()
+    return QIcon(pix)
 
-        # Weekly Row
-        self.r2 = QHBoxLayout()
-        self.lbl_wk = QLabel("Weekly")
-        self.lbl_wk.setFont(QFont("Segoe UI", 10, QFont.Bold))
-        self.lbl_wk.setStyleSheet("color: #94a3b8;")
-        self.val_wk = QLabel("--%")
-        self.val_wk.setFont(QFont("Segoe UI", 11, QFont.Bold))
-        self.val_wk.setStyleSheet("color: #34d399;")
-        self.r2.addWidget(self.lbl_wk)
-        self.r2.addStretch()
-        self.r2.addWidget(self.val_wk)
-        self.layout.addLayout(self.r2)
+def create_external_icon(color=QColor(203, 213, 225), size=18):
+    pix = QPixmap(size, size)
+    pix.fill(Qt.transparent)
+    p = QPainter(pix)
+    p.setRenderHint(QPainter.Antialiasing)
+    pen = QPen(color, 1.8)
+    pen.setCapStyle(Qt.RoundCap)
+    pen.setJoinStyle(Qt.RoundJoin)
+    p.setPen(pen)
 
-        self.bar_wk = QProgressBar()
-        self.bar_wk.setFixedHeight(6)
-        self.bar_wk.setTextVisible(False)
-        self.bar_wk.setValue(100)
-        self.set_bar_color(self.bar_wk, "#34d399")
-        self.layout.addWidget(self.bar_wk)
+    path_box = QPainterPath()
+    path_box.moveTo(9.0, 4.0)
+    path_box.lineTo(4.0, 4.0)
+    path_box.lineTo(4.0, 14.0)
+    path_box.lineTo(14.0, 14.0)
+    path_box.lineTo(14.0, 9.0)
+    p.drawPath(path_box)
 
-        self.time_wk = QLabel("Loading...")
-        self.time_wk.setFont(QFont("Segoe UI", 8))
-        self.time_wk.setStyleSheet("color: #64748b;")
-        self.layout.addWidget(self.time_wk)
-
-        self.bucket_5h_reset = None
-        self.bucket_wk_reset = None
-
-    def set_bar_color(self, bar, hex_color):
-        bar.setStyleSheet(f"""
-            QProgressBar {{
-                background: rgba(255, 255, 255, 0.08);
-                border-radius: 3px;
-                border: none;
-            }}
-            QProgressBar::chunk {{
-                background: {hex_color};
-                border-radius: 3px;
-            }}
-        """)
-
-    def update_data(self, b_5h, b_wk):
-        if b_5h:
-            frac = b_5h.get("remaining_fraction", 1.0)
-            pct = int(round(frac * 100))
-            self.val_5h.setText(f"{pct}%")
-            self.bar_5h.setValue(pct)
-            color = "#34d399" if frac > 0.5 else ("#fbbf24" if frac > 0.2 else "#f87171")
-            self.val_5h.setStyleSheet(f"color: {color}; font-weight: bold;")
-            self.set_bar_color(self.bar_5h, color)
-            self.bucket_5h_reset = b_5h.get("reset_time")
-            self.time_5h.setText(format_countdown(self.bucket_5h_reset))
-
-        if b_wk:
-            frac = b_wk.get("remaining_fraction", 1.0)
-            pct = int(round(frac * 100))
-            self.val_wk.setText(f"{pct}%")
-            self.bar_wk.setValue(pct)
-            color = "#34d399" if frac > 0.5 else ("#fbbf24" if frac > 0.2 else "#f87171")
-            self.val_wk.setStyleSheet(f"color: {color}; font-weight: bold;")
-            self.set_bar_color(self.bar_wk, color)
-            self.bucket_wk_reset = b_wk.get("reset_time")
-            self.time_wk.setText(format_countdown(self.bucket_wk_reset))
-
-    def tick_second(self):
-        if self.bucket_5h_reset:
-            self.time_5h.setText(format_countdown(self.bucket_5h_reset))
-        if self.bucket_wk_reset:
-            self.time_wk.setText(format_countdown(self.bucket_wk_reset))
-
-    def update_scaling(self, scale_factor):
-        pad_h = int(14 * scale_factor)
-        pad_v = int(12 * scale_factor)
-        spacing = int(8 * scale_factor)
-        self.layout.setContentsMargins(pad_h, pad_v, pad_h, pad_v)
-        self.layout.setSpacing(spacing)
-
-        title_pt = max(9, int(11 * scale_factor))
-        self.title.setFont(QFont("Segoe UI", title_pt, QFont.Bold))
-
-        lbl_pt = max(8, int(10 * scale_factor))
-        val_pt = max(9, int(11 * scale_factor))
-        self.lbl_5h.setFont(QFont("Segoe UI", lbl_pt, QFont.Bold))
-        self.lbl_wk.setFont(QFont("Segoe UI", lbl_pt, QFont.Bold))
-        self.val_5h.setFont(QFont("Segoe UI", val_pt, QFont.Bold))
-        self.val_wk.setFont(QFont("Segoe UI", val_pt, QFont.Bold))
-
-        time_pt = max(7, int(8 * scale_factor))
-        self.time_5h.setFont(QFont("Segoe UI", time_pt))
-        self.time_wk.setFont(QFont("Segoe UI", time_pt))
-
-        bar_h = max(4, int(6 * scale_factor))
-        self.bar_5h.setFixedHeight(bar_h)
-        self.bar_wk.setFixedHeight(bar_h)
+    p.drawLine(8, 10, 14, 4)
+    path_head = QPainterPath()
+    path_head.moveTo(10.5, 4.0)
+    path_head.lineTo(14.0, 4.0)
+    path_head.lineTo(14.0, 7.5)
+    p.drawPath(path_head)
+    p.end()
+    return QIcon(pix)
 
 # Main Glass Floating Window
 class GlassWindow(QWidget):
@@ -433,16 +388,40 @@ class GlassWindow(QWidget):
         self.setWindowTitle("Antigravity Quota Monitor")
         self.setAttribute(Qt.WA_TranslucentBackground)
 
-        w = max(280, self.config.get("win_width", 360))
-        h = max(320, self.config.get("win_height", 500))
+        w = max(310, self.config.get("win_width", 390))
+        h = max(380, self.config.get("win_height", 485))
         self.resize(w, h)
-        self.setMinimumSize(270, 300)
+        self.setMinimumSize(300, 360)
 
         # Initial position
         if self.config.get("pos_x") is not None and self.config.get("pos_y") is not None:
             self.move(self.config["pos_x"], self.config["pos_y"])
         else:
             self.move_to_default_position()
+
+        # Instances model list
+        self.instances = [
+            {
+                "id": "gemini",
+                "name": "Gemini Models",
+                "tag": "Cod",
+                "account": self.config.get("account_email", "ka***e@g***l.com"),
+                "tier": self.config.get("tier_badge", "PLUS"),
+                "5h": {"pct": 100, "frac": 1.0, "time": "Loading...", "reset_time": None},
+                "weekly": {"pct": 100, "frac": 1.0, "time": "Loading...", "reset_time": None}
+            },
+            {
+                "id": "3p",
+                "name": "Claude and GPT models",
+                "tag": "3P",
+                "account": self.config.get("account_email", "ka***e@g***l.com"),
+                "tier": self.config.get("tier_badge", "PLUS"),
+                "5h": {"pct": 100, "frac": 1.0, "time": "Loading...", "reset_time": None},
+                "weekly": {"pct": 100, "frac": 1.0, "time": "Loading...", "reset_time": None}
+            }
+        ]
+        self.current_idx = 0
+        self.overview_mode = False
 
         self.init_ui()
 
@@ -458,77 +437,72 @@ class GlassWindow(QWidget):
 
     def move_to_default_position(self):
         screen = QApplication.primaryScreen().availableGeometry()
-        x = screen.right() - self.width() - 16
-        y = screen.bottom() - self.height() - 16
+        x = screen.right() - self.width() - 20
+        y = screen.bottom() - self.height() - 20
         self.move(x, y)
 
     def init_ui(self):
         self.main_layout = QVBoxLayout(self)
-        self.main_layout.setContentsMargins(16, 16, 16, 16)
-        self.main_layout.setSpacing(10)
+        self.main_layout.setContentsMargins(18, 16, 18, 18)
+        self.main_layout.setSpacing(12)
 
-        # --- Top Header Bar ---
+        # 1. Header Bar: [Logo]      Default Instance      [Pin] [Close]
         self.hdr = QHBoxLayout()
-        self.hdr.setSpacing(7)
+        self.hdr.setContentsMargins(2, 2, 2, 2)
+        self.hdr.setSpacing(8)
 
-        # AG Badge
-        self.ag_badge = QLabel("AG")
-        self.ag_badge.setFont(QFont("Segoe UI", 9, QFont.Bold))
-        self.ag_badge.setStyleSheet("""
-            background: #2563eb;
-            color: white;
-            padding: 2px 7px;
-            border-radius: 6px;
-        """)
-        self.hdr.addWidget(self.ag_badge)
-
-        # Title
-        self.win_title = QLabel("Antigravity Quota")
-        self.win_title.setFont(QFont("Segoe UI", 12, QFont.Bold))
-        self.win_title.setStyleSheet("color: #ffffff;")
-        self.hdr.addWidget(self.win_title)
-
-        # Live Pill
-        self.live_badge = QLabel("● LIVE")
-        self.live_badge.setFont(QFont("Segoe UI", 8, QFont.Bold))
-        self.live_badge.setStyleSheet("""
-            background: rgba(16, 185, 129, 0.20);
-            color: #34d399;
-            border: 1px solid rgba(52, 211, 153, 0.35);
-            padding: 2px 6px;
-            border-radius: 8px;
-        """)
-        self.hdr.addWidget(self.live_badge)
+        self.logo = ReferenceLogo(self)
+        self.hdr.addWidget(self.logo)
 
         self.hdr.addStretch()
 
-        # Pin Button
-        self.btn_pin = QPushButton("📌" if self.is_pinned else "📍")
+        self.title_lbl = QLabel("Default Instance")
+        self.title_lbl.setFont(QFont("Segoe UI", 13, QFont.Bold))
+        self.title_lbl.setStyleSheet("color: #ffffff; letter-spacing: 0.2px;")
+        self.hdr.addWidget(self.title_lbl)
+
+        self.hdr.addStretch()
+
+        # Pin button
+        self.btn_pin = QPushButton()
+        self.btn_pin.setFixedSize(28, 28)
         self.btn_pin.setToolTip("Pin window (keep visible)")
-        self.btn_pin.setFixedSize(26, 26)
         self.btn_pin.setCursor(Qt.PointingHandCursor)
-        self.btn_pin.setStyleSheet(self.get_pin_btn_style())
+        self.btn_pin.setStyleSheet("""
+            QPushButton {
+                background: rgba(255, 255, 255, 0.08);
+                border: 1px solid rgba(255, 255, 255, 0.12);
+                border-radius: 14px;
+            }
+            QPushButton:hover {
+                background: rgba(255, 255, 255, 0.16);
+            }
+        """)
+        pin_layout = QHBoxLayout(self.btn_pin)
+        pin_layout.setContentsMargins(0, 0, 0, 0)
+        self.pin_icon = SlashedPinIcon(self.is_pinned, self.btn_pin)
+        pin_layout.addWidget(self.pin_icon, 0, Qt.AlignCenter)
         self.btn_pin.clicked.connect(self.toggle_pin)
         self.hdr.addWidget(self.btn_pin)
 
-        # Close Button
+        # Close button
         btn_close = QPushButton("✕")
+        btn_close.setFixedSize(28, 28)
         btn_close.setToolTip("Close to system tray")
-        btn_close.setFixedSize(26, 26)
+        btn_close.setFont(QFont("Segoe UI", 10, QFont.Bold))
         btn_close.setCursor(Qt.PointingHandCursor)
         btn_close.setStyleSheet("""
             QPushButton {
                 background: rgba(255, 255, 255, 0.08);
-                color: #94a3b8;
+                color: #cbd5e1;
                 border: 1px solid rgba(255, 255, 255, 0.12);
-                border-radius: 13px;
-                font-size: 11px;
-                font-weight: bold;
+                border-radius: 14px;
+                padding-bottom: 2px;
             }
             QPushButton:hover {
-                background: rgba(239, 68, 68, 0.30);
-                color: #f87171;
-                border-color: rgba(239, 68, 68, 0.40);
+                background: rgba(239, 68, 68, 0.35);
+                color: #ffffff;
+                border-color: rgba(239, 68, 68, 0.50);
             }
         """)
         btn_close.clicked.connect(self.hide)
@@ -536,7 +510,125 @@ class GlassWindow(QWidget):
 
         self.main_layout.addLayout(self.hdr)
 
-        # --- Scrollable Content Area ---
+        # 2. Sub-header Navigation Pill Row: [Cod ⌵]   <   1 / 2   >   [Account preview]
+        self.sub_hdr = QHBoxLayout()
+        self.sub_hdr.setSpacing(8)
+
+        self.btn_model = QPushButton("Cod  ⌵")
+        self.btn_model.setFixedHeight(28)
+        self.btn_model.setFont(QFont("Segoe UI", 9, QFont.Bold))
+        self.btn_model.setCursor(Qt.PointingHandCursor)
+        self.btn_model.setStyleSheet("""
+            QPushButton {
+                background: rgba(0, 0, 0, 0.38);
+                color: #ffffff;
+                border: 1px solid rgba(255, 255, 255, 0.12);
+                border-radius: 14px;
+                padding: 0 14px;
+            }
+            QPushButton:hover {
+                background: rgba(255, 255, 255, 0.12);
+            }
+        """)
+        self.btn_model.clicked.connect(self.show_model_menu)
+        self.sub_hdr.addWidget(self.btn_model)
+
+        self.sub_hdr.addStretch()
+
+        # Center nav [<  1 / 2  >]
+        self.btn_prev = QPushButton("<")
+        self.btn_prev.setFixedSize(26, 26)
+        self.btn_prev.setFont(QFont("Segoe UI", 9, QFont.Bold))
+        self.btn_prev.setCursor(Qt.PointingHandCursor)
+        self.btn_prev.setStyleSheet("""
+            QPushButton {
+                background: rgba(0, 0, 0, 0.32);
+                color: #94a3b8;
+                border: 1px solid rgba(255, 255, 255, 0.10);
+                border-radius: 13px;
+            }
+            QPushButton:hover {
+                background: rgba(255, 255, 255, 0.15);
+                color: #ffffff;
+            }
+        """)
+        self.btn_prev.clicked.connect(self.prev_instance)
+        self.sub_hdr.addWidget(self.btn_prev)
+
+        self.lbl_counter = QLabel("1 / 2")
+        self.lbl_counter.setFont(QFont("Segoe UI", 9, QFont.Bold))
+        self.lbl_counter.setStyleSheet("color: #e2e8f0; padding: 0 4px;")
+        self.sub_hdr.addWidget(self.lbl_counter)
+
+        self.btn_next = QPushButton(">")
+        self.btn_next.setFixedSize(26, 26)
+        self.btn_next.setFont(QFont("Segoe UI", 9, QFont.Bold))
+        self.btn_next.setCursor(Qt.PointingHandCursor)
+        self.btn_next.setStyleSheet("""
+            QPushButton {
+                background: rgba(0, 0, 0, 0.32);
+                color: #94a3b8;
+                border: 1px solid rgba(255, 255, 255, 0.10);
+                border-radius: 13px;
+            }
+            QPushButton:hover {
+                background: rgba(255, 255, 255, 0.15);
+                color: #ffffff;
+            }
+        """)
+        self.btn_next.clicked.connect(self.next_instance)
+        self.sub_hdr.addWidget(self.btn_next)
+
+        self.sub_hdr.addStretch()
+
+        # Account preview pill
+        self.btn_preview = QPushButton("Account preview")
+        self.btn_preview.setFixedHeight(28)
+        self.btn_preview.setFont(QFont("Segoe UI", 9, QFont.Bold))
+        self.btn_preview.setCursor(Qt.PointingHandCursor)
+        self.btn_preview.setStyleSheet("""
+            QPushButton {
+                background: rgba(0, 0, 0, 0.38);
+                color: #e2e8f0;
+                border: 1px solid rgba(255, 255, 255, 0.12);
+                border-radius: 14px;
+                padding: 0 13px;
+            }
+            QPushButton:hover {
+                background: rgba(255, 255, 255, 0.12);
+            }
+        """)
+        self.btn_preview.clicked.connect(self.toggle_overview)
+        self.sub_hdr.addWidget(self.btn_preview)
+
+        self.main_layout.addLayout(self.sub_hdr)
+
+        # 3. Account ID & Tier Badge Row: [ka***e@g***l.com]      [PLUS]
+        self.acc_row = QHBoxLayout()
+        self.acc_row.setContentsMargins(4, 4, 4, 0)
+        self.acc_lbl = QLabel(self.config.get("account_email", "ka***e@g***l.com"))
+        self.acc_lbl.setFont(QFont("Segoe UI", 16, QFont.Bold))
+        self.acc_lbl.setStyleSheet("color: #ffffff; letter-spacing: 0.2px;")
+        self.acc_row.addWidget(self.acc_lbl)
+
+        self.acc_row.addStretch()
+
+        self.badge_tier = QLabel(self.config.get("tier_badge", "PLUS"))
+        self.badge_tier.setFont(QFont("Segoe UI", 9, QFont.Bold))
+        self.badge_tier.setAlignment(Qt.AlignCenter)
+        self.badge_tier.setFixedSize(58, 24)
+        self.badge_tier.setStyleSheet("""
+            background: #7ae3b5;
+            color: #042f2e;
+            border-radius: 12px;
+            font-weight: 800;
+            letter-spacing: 0.6px;
+        """)
+        self.acc_row.addWidget(self.badge_tier)
+
+        self.main_layout.addLayout(self.acc_row)
+
+        # 4. Scrollable Container for Quota Card(s)
         self.scroll = QScrollArea()
         self.scroll.setWidgetResizable(True)
         self.scroll.setFrameShape(QFrame.NoFrame)
@@ -569,88 +661,282 @@ class GlassWindow(QWidget):
             }
         """)
 
-        container = QWidget()
-        container.setStyleSheet("background: transparent;")
-        self.cont_layout = QVBoxLayout(container)
-        self.cont_layout.setContentsMargins(0, 0, 2, 4)
-        self.cont_layout.setSpacing(10)
+        self.card_container = QWidget()
+        self.card_container.setStyleSheet("background: transparent;")
+        self.card_cont_layout = QVBoxLayout(self.card_container)
+        self.card_cont_layout.setContentsMargins(0, 0, 0, 0)
+        self.card_cont_layout.setSpacing(10)
 
-        # Card 1: Gemini Models
-        self.card_gemini = ResponsiveQuotaCard("Gemini Models", "PRO & FLASH", "#38bdf8", container)
-        self.cont_layout.addWidget(self.card_gemini)
+        # Main Single Quota Card
+        self.card_frame = QFrame()
+        self.card_frame.setStyleSheet("""
+            QFrame#mainCard {
+                background: rgba(0, 0, 0, 0.36);
+                border: 1px solid rgba(255, 255, 255, 0.08);
+                border-radius: 16px;
+            }
+        """)
+        self.card_frame.setObjectName("mainCard")
+        card_layout = QVBoxLayout(self.card_frame)
+        card_layout.setContentsMargins(18, 16, 18, 16)
+        card_layout.setSpacing(6)
 
-        # Card 2: Claude & GPT Models
-        self.card_claude = ResponsiveQuotaCard("Claude & GPT", "OPUS & SONNET", "#fb923c", container)
-        self.cont_layout.addWidget(self.card_claude)
+        # 5h section
+        row_5h = QHBoxLayout()
+        self.lbl_5h_title = QLabel("5h")
+        self.lbl_5h_title.setFont(QFont("Segoe UI", 11, QFont.Bold))
+        self.lbl_5h_title.setStyleSheet("color: #ffffff; border: none; background: transparent;")
+        row_5h.addWidget(self.lbl_5h_title)
 
-        self.cont_layout.addStretch()
-        self.scroll.setWidget(container)
+        row_5h.addStretch()
+
+        self.val_5h = QLabel("100%")
+        self.val_5h.setFont(QFont("Segoe UI", 11, QFont.Bold))
+        self.val_5h.setStyleSheet("color: #34d399; border: none; background: transparent;")
+        row_5h.addWidget(self.val_5h)
+        card_layout.addLayout(row_5h)
+
+        self.bar_5h = QProgressBar()
+        self.bar_5h.setFixedHeight(5)
+        self.bar_5h.setTextVisible(False)
+        self.bar_5h.setValue(100)
+        self.set_bar_chunk_color(self.bar_5h, "#34d399")
+        card_layout.addWidget(self.bar_5h)
+
+        self.time_5h = QLabel("4h 56m (09/29 00:05)")
+        self.time_5h.setFont(QFont("Segoe UI", 9))
+        self.time_5h.setStyleSheet("color: #64748b; border: none; background: transparent;")
+        card_layout.addWidget(self.time_5h)
+
+        # Divider line
+        self.div = QFrame()
+        self.div.setFixedHeight(1)
+        self.div.setStyleSheet("background: rgba(255, 255, 255, 0.05); border: none;")
+        card_layout.addSpacing(6)
+        card_layout.addWidget(self.div)
+        card_layout.addSpacing(6)
+
+        # Weekly section
+        row_wk = QHBoxLayout()
+        self.lbl_wk_title = QLabel("Weekly")
+        self.lbl_wk_title.setFont(QFont("Segoe UI", 11, QFont.Bold))
+        self.lbl_wk_title.setStyleSheet("color: #ffffff; border: none; background: transparent;")
+        row_wk.addWidget(self.lbl_wk_title)
+
+        row_wk.addStretch()
+
+        self.val_wk = QLabel("73%")
+        self.val_wk.setFont(QFont("Segoe UI", 11, QFont.Bold))
+        self.val_wk.setStyleSheet("color: #f59e0b; border: none; background: transparent;")
+        row_wk.addWidget(self.val_wk)
+        card_layout.addLayout(row_wk)
+
+        self.bar_wk = QProgressBar()
+        self.bar_wk.setFixedHeight(5)
+        self.bar_wk.setTextVisible(False)
+        self.bar_wk.setValue(73)
+        self.set_bar_chunk_color(self.bar_wk, "#f59e0b")
+        card_layout.addWidget(self.bar_wk)
+
+        self.time_wk = QLabel("6d 13h 55m (10/05 09:04)")
+        self.time_wk.setFont(QFont("Segoe UI", 9))
+        self.time_wk.setStyleSheet("color: #64748b; border: none; background: transparent;")
+        card_layout.addWidget(self.time_wk)
+
+        self.card_cont_layout.addWidget(self.card_frame)
+
+        self.scroll.setWidget(self.card_container)
         self.main_layout.addWidget(self.scroll)
 
-        # --- Footer Bar ---
+        self.main_layout.addStretch()
+
+        # 5. Bottom Action Bar: [Back]  [Switch]             [↻]  [↗]
         self.footer = QHBoxLayout()
-        self.lbl_status = QLabel("Live synchronized")
-        self.lbl_status.setFont(QFont("Segoe UI", 9))
-        self.lbl_status.setStyleSheet("color: #64748b;")
-        self.footer.addWidget(self.lbl_status)
+        self.footer.setContentsMargins(4, 2, 4, 2)
+        self.footer.setSpacing(8)
+
+        self.btn_back = QPushButton(" Back")
+        self.btn_back.setIcon(create_back_icon())
+        self.btn_back.setIconSize(QSize(16, 16))
+        self.btn_back.setFixedHeight(34)
+        self.btn_back.setFont(QFont("Segoe UI", 9, QFont.Bold))
+        self.btn_back.setCursor(Qt.PointingHandCursor)
+        self.btn_back.setStyleSheet("""
+            QPushButton {
+                background: rgba(0, 0, 0, 0.40);
+                color: #ffffff;
+                border: 1px solid rgba(255, 255, 255, 0.14);
+                border-radius: 17px;
+                padding: 0 14px;
+            }
+            QPushButton:hover {
+                background: rgba(255, 255, 255, 0.12);
+            }
+        """)
+        self.btn_back.clicked.connect(self.prev_instance)
+        self.footer.addWidget(self.btn_back)
+
+        self.btn_switch = QPushButton("Switch")
+        self.btn_switch.setFixedHeight(34)
+        self.btn_switch.setFont(QFont("Segoe UI", 9, QFont.Bold))
+        self.btn_switch.setCursor(Qt.PointingHandCursor)
+        self.btn_switch.setStyleSheet("""
+            QPushButton {
+                background: #f59e0b;
+                color: #000000;
+                border: none;
+                border-radius: 17px;
+                padding: 0 16px;
+                font-weight: 800;
+            }
+            QPushButton:hover {
+                background: #fbbf24;
+            }
+            QPushButton:pressed {
+                background: #d97706;
+            }
+        """)
+        self.btn_switch.clicked.connect(self.next_instance)
+        self.footer.addWidget(self.btn_switch)
 
         self.footer.addStretch()
 
-        self.btn_refresh = QPushButton("↻ Refresh")
-        self.btn_refresh.setFont(QFont("Segoe UI", 9, QFont.DemiBold))
+        # Circular Refresh button
+        self.btn_refresh = QPushButton()
+        self.btn_refresh.setIcon(create_refresh_icon())
+        self.btn_refresh.setIconSize(QSize(16, 16))
+        self.btn_refresh.setFixedSize(34, 34)
         self.btn_refresh.setCursor(Qt.PointingHandCursor)
         self.btn_refresh.setStyleSheet("""
             QPushButton {
-                background: rgba(255, 255, 255, 0.08);
-                color: #e2e8f0;
+                background: rgba(0, 0, 0, 0.40);
                 border: 1px solid rgba(255, 255, 255, 0.14);
-                border-radius: 11px;
-                padding: 4px 12px;
+                border-radius: 17px;
             }
             QPushButton:hover {
-                background: rgba(255, 255, 255, 0.16);
-                border-color: rgba(255, 255, 255, 0.25);
-                color: #ffffff;
-            }
-            QPushButton:pressed {
-                background: rgba(255, 255, 255, 0.22);
+                background: rgba(255, 255, 255, 0.15);
             }
         """)
         self.btn_refresh.clicked.connect(self.app_manager.trigger_refresh)
         self.footer.addWidget(self.btn_refresh)
 
+        # Circular Link button
+        self.btn_link = QPushButton()
+        self.btn_link.setIcon(create_external_icon())
+        self.btn_link.setIconSize(QSize(16, 16))
+        self.btn_link.setFixedSize(34, 34)
+        self.btn_link.setCursor(Qt.PointingHandCursor)
+        self.btn_link.setStyleSheet("""
+            QPushButton {
+                background: rgba(0, 0, 0, 0.40);
+                border: 1px solid rgba(255, 255, 255, 0.14);
+                border-radius: 17px;
+            }
+            QPushButton:hover {
+                background: rgba(255, 255, 255, 0.15);
+            }
+        """)
+        self.btn_link.clicked.connect(self.open_web_dashboard)
+        self.footer.addWidget(self.btn_link)
+
         self.main_layout.addLayout(self.footer)
 
-    def get_pin_btn_style(self):
-        if self.is_pinned:
-            return """
-                QPushButton {
-                    background: rgba(56, 189, 248, 0.25);
-                    color: #38bdf8;
-                    border: 1px solid rgba(56, 189, 248, 0.50);
-                    border-radius: 13px;
-                    font-size: 12px;
-                }
-            """
-        else:
-            return """
-                QPushButton {
-                    background: rgba(255, 255, 255, 0.08);
-                    color: #94a3b8;
-                    border: 1px solid rgba(255, 255, 255, 0.12);
-                    border-radius: 13px;
-                    font-size: 12px;
-                }
-                QPushButton:hover {
-                    background: rgba(255, 255, 255, 0.16);
-                    color: #ffffff;
-                }
-            """
+        self.update_display()
+
+    def set_bar_chunk_color(self, bar, hex_color):
+        bar.setStyleSheet(f"""
+            QProgressBar {{
+                background: rgba(255, 255, 255, 0.09);
+                border-radius: 2.5px;
+                border: none;
+            }}
+            QProgressBar::chunk {{
+                background: {hex_color};
+                border-radius: 2.5px;
+            }}
+        """)
+
+    def update_display(self):
+        total = len(self.instances)
+        if total == 0:
+            return
+
+        self.current_idx = self.current_idx % total
+        inst = self.instances[self.current_idx]
+
+        self.lbl_counter.setText(f"{self.current_idx + 1} / {total}")
+        self.btn_model.setText(f"{inst['tag']}  ⌵")
+        self.acc_lbl.setText(inst.get("account", "ka***e@g***l.com"))
+        self.badge_tier.setText(inst.get("tier", "PLUS"))
+
+        pct_5h = inst["5h"]["pct"]
+        self.val_5h.setText(f"{pct_5h}%")
+        self.bar_5h.setValue(pct_5h)
+        col_5h = "#34d399" if pct_5h >= 80 else ("#f59e0b" if pct_5h >= 25 else "#ef4444")
+        self.val_5h.setStyleSheet(f"color: {col_5h}; font-weight: bold; border: none; background: transparent;")
+        self.set_bar_chunk_color(self.bar_5h, col_5h)
+        self.time_5h.setText(inst["5h"]["time"])
+
+        pct_wk = inst["weekly"]["pct"]
+        self.val_wk.setText(f"{pct_wk}%")
+        self.bar_wk.setValue(pct_wk)
+        col_wk = "#34d399" if pct_wk >= 80 else ("#f59e0b" if pct_wk >= 25 else "#ef4444")
+        self.val_wk.setStyleSheet(f"color: {col_wk}; font-weight: bold; border: none; background: transparent;")
+        self.set_bar_chunk_color(self.bar_wk, col_wk)
+        self.time_wk.setText(inst["weekly"]["time"])
+
+    def show_model_menu(self):
+        menu = QMenu(self)
+        menu.setStyleSheet("""
+            QMenu {
+                background: #182030;
+                color: #f1f5f9;
+                border: 1px solid rgba(255, 255, 255, 0.15);
+                border-radius: 8px;
+                padding: 4px;
+            }
+            QMenu::item {
+                padding: 6px 18px 6px 12px;
+                border-radius: 4px;
+                font-weight: 600;
+            }
+            QMenu::item:selected {
+                background: #3b82f6;
+                color: #ffffff;
+            }
+        """)
+        for idx, inst in enumerate(self.instances):
+            act = QAction(f"{inst['name']} ({inst['tag']})", menu)
+            act.triggered.connect(lambda checked, i=idx: self.select_instance(i))
+            menu.addAction(act)
+
+        menu.exec_(self.btn_model.mapToGlobal(QPoint(0, self.btn_model.height() + 4)))
+
+    def select_instance(self, idx):
+        self.current_idx = idx
+        self.update_display()
+
+    def cycle_instance(self):
+        self.current_idx = (self.current_idx + 1) % len(self.instances)
+        self.update_display()
+
+    def next_instance(self):
+        self.current_idx = (self.current_idx + 1) % len(self.instances)
+        self.update_display()
+
+    def prev_instance(self):
+        self.current_idx = (self.current_idx - 1) % len(self.instances)
+        self.update_display()
+
+    def toggle_overview(self):
+        self.cycle_instance()
+
+    def open_web_dashboard(self):
+        webbrowser.open("https://aistudio.google.com")
 
     def toggle_pin(self):
         self.is_pinned = not self.is_pinned
-        self.btn_pin.setText("📌" if self.is_pinned else "📍")
-        self.btn_pin.setStyleSheet(self.get_pin_btn_style())
+        self.pin_icon.setPinned(self.is_pinned)
         self.config["pinned"] = self.is_pinned
         save_config(self.config)
 
@@ -665,14 +951,19 @@ class GlassWindow(QWidget):
 
         path = QPainterPath()
         rect = QRectF(self.rect()).adjusted(1, 1, -1, -1)
-        # Deep smooth rounded corners (radius 28px)
-        path.addRoundedRect(rect, 28, 28)
+        path.addRoundedRect(rect, 26, 26)
 
         # Translucent dark frosted background fill
-        painter.fillPath(path, QColor(14, 20, 34, 165))
+        painter.fillPath(path, QColor(11, 17, 28, 145))
+
+        # Specular light highlight gradient at the very top
+        top_grad = QLinearGradient(0, 1, 0, 42)
+        top_grad.setColorAt(0, QColor(255, 255, 255, 18))
+        top_grad.setColorAt(1, QColor(255, 255, 255, 0))
+        painter.fillPath(path, top_grad)
 
         # Thin elegant highlight border
-        pen = QPen(QColor(255, 255, 255, 42), 1.2)
+        pen = QPen(QColor(255, 255, 255, 34), 1.2)
         painter.setPen(pen)
         painter.drawPath(path)
 
@@ -689,7 +980,7 @@ class GlassWindow(QWidget):
             h = self.height()
             bw = self.BORDER_WIDTH
 
-            # 4 Corners (Completely invisible to user - no indicators, no lines, no colors)
+            # 4 Corners (Completely invisible - native cursor feedback only)
             if p.x() <= bw and p.y() <= bw:
                 return True, 13  # HTTOPLEFT
             elif p.x() >= w - bw and p.y() <= bw:
@@ -710,7 +1001,7 @@ class GlassWindow(QWidget):
                 return True, 15  # HTBOTTOM
 
             # Top header bar (Drag to move, except buttons)
-            if p.y() <= 46 and p.x() < (w - 75):
+            if p.y() <= 48 and p.x() < (w - 75):
                 return True, 2   # HTCAPTION
 
         return super().nativeEvent(eventType, message)
@@ -740,44 +1031,23 @@ class GlassWindow(QWidget):
         save_config(self.config)
 
         # Responsive scale calculation:
-        # Base width is 360, base height is 480
-        # Scale ranges between 0.78 and 1.0 (capped so text never gets too large)
-        w_factor = w / 360.0
-        h_factor = h / 480.0
+        # Base width is 390, base height is 485
+        w_factor = w / 390.0
+        h_factor = h / 485.0
         factor = min(w_factor, h_factor)
-        scale = max(0.75, min(1.0, factor))
+        scale = max(0.80, min(1.0, factor))
 
         # Update layouts
-        margin = max(10, int(16 * scale))
-        spacing = max(6, int(10 * scale))
+        margin = max(12, int(18 * scale))
+        spacing = max(8, int(12 * scale))
         self.main_layout.setContentsMargins(margin, margin, margin, margin)
         self.main_layout.setSpacing(spacing)
-        self.cont_layout.setSpacing(spacing)
 
-        # Update cards
-        self.card_gemini.update_scaling(scale)
-        self.card_claude.update_scaling(scale)
+        title_pt = max(10, int(13 * scale))
+        self.title_lbl.setFont(QFont("Segoe UI", title_pt, QFont.Bold))
 
-        # Responsive Header: avoid any collision
-        if w >= 340:
-            self.win_title.setText("Antigravity Quota")
-            self.win_title.setVisible(True)
-            self.live_badge.setVisible(True)
-        elif w >= 295:
-            self.win_title.setText("AG Quota")
-            self.win_title.setVisible(True)
-            self.live_badge.setVisible(True)
-        else:
-            self.win_title.setText("Quota")
-            self.win_title.setVisible(True)
-            self.live_badge.setVisible(False)
-
-        title_pt = max(9, int(12 * scale))
-        self.win_title.setFont(QFont("Segoe UI", title_pt, QFont.Bold))
-
-        # Status font
-        status_pt = max(7, int(9 * scale))
-        self.lbl_status.setFont(QFont("Segoe UI", status_pt))
+        acc_pt = max(12, int(16 * scale))
+        self.acc_lbl.setFont(QFont("Segoe UI", acc_pt, QFont.Bold))
 
     def moveEvent(self, event):
         super().moveEvent(event)
@@ -786,13 +1056,12 @@ class GlassWindow(QWidget):
         save_config(self.config)
 
     def on_second_tick(self):
-        self.card_gemini.tick_second()
-        self.card_claude.tick_second()
-        diff = int(time.time() - self.last_sync_ts)
-        if diff < 5:
-            self.lbl_status.setText("Live synchronized")
-        else:
-            self.lbl_status.setText(f"Updated {diff}s ago")
+        for inst in self.instances:
+            if inst["5h"].get("reset_time"):
+                inst["5h"]["time"] = format_ref_countdown(inst["5h"]["reset_time"])
+            if inst["weekly"].get("reset_time"):
+                inst["weekly"]["time"] = format_ref_countdown(inst["weekly"]["reset_time"])
+        self.update_display()
 
     def on_data_received(self, data):
         self.last_sync_ts = time.time()
@@ -800,7 +1069,8 @@ class GlassWindow(QWidget):
         min_frac = 1.0
 
         for g in groups:
-            name = g.get("name", "").lower()
+            name = g.get("name", "")
+            name_lower = name.lower()
             buckets = g.get("buckets", [])
             b_5h = next((b for b in buckets if b.get("window") == "5h"), None)
             b_wk = next((b for b in buckets if b.get("window") == "weekly"), None)
@@ -809,11 +1079,29 @@ class GlassWindow(QWidget):
                 frac = b.get("remaining_fraction", 1.0)
                 min_frac = min(min_frac, frac)
 
-            if "gemini" in name:
-                self.card_gemini.update_data(b_5h, b_wk)
-            elif "claude" in name or "gpt" in name or "3p" in name:
-                self.card_claude.update_data(b_5h, b_wk)
+            # Match instance
+            target_inst = None
+            if "gemini" in name_lower:
+                target_inst = next((i for i in self.instances if i["id"] == "gemini"), None)
+            elif "claude" in name_lower or "gpt" in name_lower or "3p" in name_lower:
+                target_inst = next((i for i in self.instances if i["id"] == "3p"), None)
 
+            if target_inst:
+                if b_5h:
+                    frac_5h = b_5h.get("remaining_fraction", 1.0)
+                    target_inst["5h"]["frac"] = frac_5h
+                    target_inst["5h"]["pct"] = int(round(frac_5h * 100))
+                    target_inst["5h"]["reset_time"] = b_5h.get("reset_time")
+                    target_inst["5h"]["time"] = format_ref_countdown(b_5h.get("reset_time"))
+
+                if b_wk:
+                    frac_wk = b_wk.get("remaining_fraction", 1.0)
+                    target_inst["weekly"]["frac"] = frac_wk
+                    target_inst["weekly"]["pct"] = int(round(frac_wk * 100))
+                    target_inst["weekly"]["reset_time"] = b_wk.get("reset_time")
+                    target_inst["weekly"]["time"] = format_ref_countdown(b_wk.get("reset_time"))
+
+        self.update_display()
         self.app_manager.update_tray_icon(min_frac)
 
 # Main Application Controller
@@ -826,7 +1114,7 @@ class AppManager(QObject):
         # Locate agy.exe
         self.agy_path = shutil.which("agy") or shutil.which("agy.exe")
         if not self.agy_path:
-            local_bin = os.path.expanduser(r"~\AppData\Local\Programs\antigravity-cli\bin\agy.exe")
+            local_bin = os.path.expanduser(r"~\AppData\Local\agy\bin\agy.exe")
             if os.path.exists(local_bin):
                 self.agy_path = local_bin
             else:
@@ -842,15 +1130,16 @@ class AppManager(QObject):
         self.menu = QMenu()
         self.menu.setStyleSheet("""
             QMenu {
-                background: #1e293b;
+                background: #182030;
                 color: #f1f5f9;
-                border: 1px solid rgba(255, 255, 255, 0.12);
+                border: 1px solid rgba(255, 255, 255, 0.15);
                 border-radius: 8px;
                 padding: 4px;
             }
             QMenu::item {
                 padding: 6px 20px 6px 12px;
                 border-radius: 4px;
+                font-weight: 500;
             }
             QMenu::item:selected {
                 background: #3b82f6;
@@ -924,7 +1213,6 @@ class AppManager(QObject):
         except Exception:
             pass
         apply_acrylic_blur(int(self.window.winId()))
-        # Fast live refresh when window opens
         self.trigger_refresh()
 
     def toggle_autostart(self):
@@ -937,11 +1225,7 @@ class AppManager(QObject):
         threading.Thread(target=self._fetch_worker, daemon=True).start()
 
     def on_bg_timer(self):
-        # Refresh faster if window is open
-        if self.window.isVisible():
-            self.trigger_refresh()
-        else:
-            self.trigger_refresh()
+        self.trigger_refresh()
 
     def _fetch_worker(self):
         try:
@@ -958,7 +1242,7 @@ class AppManager(QObject):
                 cmd_data = parsed.get("command", {}).get("data", {})
                 if cmd_data:
                     self.window.data_received.emit(cmd_data)
-        except Exception as e:
+        except Exception:
             pass
 
     def quit_app(self):
