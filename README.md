@@ -2,7 +2,7 @@
 
 Ein leichtgewichtiges, modernes Windows System-Tray-Tool zur Echtzeit-Überwachung deiner Google Antigravity (`agy`) API-Quoten und Modell-Limits (Gemini Flash/Pro, Claude Sonnet/Opus, GPT-OSS).
 
-Mit frei verschiebbarem **Floating Window**, stufenloser **Größenanpassung (Resize)**, **sekundengenauem Live-Countdown** und **automatischem Zuklappen** bei Klick außerhalb.
+Mit Windows 11 **Glassmorphism / Acrylic UI**, frei verschiebbarem **Floating Window**, stufenloser **Größenanpassung an allen Rändern**, **sekundengenauem Live-Countdown** und **automatischem Zuklappen** bei Klick außerhalb.
 
 ---
 
@@ -63,13 +63,14 @@ pip install -r requirements.txt
 | :--- | :--- |
 | **Linksklick auf Tray-Icon** | Öffnet oder schließt das Quota-Dashboard. |
 | **Kein störender Tooltip** | Hover mit der Maus über das Icon macht bewusst gar nichts. |
+| **Windows 11 Glass UI** | Moderne Acryl-/Glas-Optik mit abgerundeten Ecken und perfekt zentriertem AG-Icon im Ring. |
 | **Verschieben (Floating Window)** | Klicke auf die obere Titelleiste und ziehe das Fenster an eine beliebige Stelle auf dem Bildschirm. |
-| **Größe anpassen (Resize)** | Ziehe an der rechten unteren Ecke (`◢`), um Breite und Höhe frei anzupassen. |
-| **Andocken (Reset)** | Doppelklick auf die Titelleiste oder Klick auf das Symbol `⤢` oben rechts dockt das Fenster wieder über der Windows-Taskleiste an. |
+| **Größe anpassen (Resize an allen Rändern)** | Ziehe an beliebigen Rändern oder Ecken (oben, unten, links, rechts, Ecken), um die Größe stufenlos anzupassen. |
+| **Dynamische Skalierung (Nie gecropped)** | Schriften und Abstände passen sich automatisch der Fenstergröße an, damit Inhalte nie abgeschnitten werden. |
 | **Automatisches Zuklappen** | Ein Klick außerhalb des Fensters schließt das Dashboard sofort automatisch. |
 | **Anpinnen (Sticky Mode)** | Klick auf `📌` oben rechts hält das Fenster als dauerhaftes Floating-Widget immer im Vordergrund, ohne zuzuklappen. |
 | **Live Countdown** | Die Reset-Zeiten der 5-Stunden- und Wochen-Limits zählen jede Sekunde live herunter. |
-| **Echtzeit-Aktualisierung** | Solange das Dashboard geöffnet ist, aktualisiert es sich alle 10 Sekunden automatisch (oder sofort per Klick auf `🔄`). |
+| **Echtzeit-Synchronisierung** | Dauerhaft synchron im Hintergrund (solange Signal da ist, bleibt `● LIVE` ohne ständiges Umschalten). |
 | **Rechtsklick auf Tray-Icon** | Öffnet das Kontextmenü mit Optionen wie *Dashboard öffnen*, *Jetzt live aktualisieren*, *Autostart mit Windows* und *Beenden*. |
 
 > **💡 Tipp für Windows 11:** Falls das Icon nach dem Start nicht direkt neben der Uhr sichtbar ist, klicke auf den kleinen Pfeil nach oben (`^` für ausgeblendete Symbole). Du kannst das `AG`-Icon einfach mit gedrückter linker Maustaste auf deine sichtbare Taskleiste herausziehen.
