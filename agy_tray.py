@@ -11,19 +11,6 @@ import sys
 
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
 
-# Redirect stdout/stderr when running via pythonw.exe
-if sys.stdout is None:
-    try:
-        sys.stdout = open(os.path.join(APP_DIR, "agy_tray_stdout.log"), "a", encoding="utf-8")
-    except Exception:
-        sys.stdout = open(os.devnull, "w")
-
-if sys.stderr is None:
-    try:
-        sys.stderr = open(os.path.join(APP_DIR, "agy_tray_stderr.log"), "a", encoding="utf-8")
-    except Exception:
-        sys.stderr = open(os.devnull, "w")
-
 import json
 import time
 import math
@@ -35,6 +22,60 @@ import webbrowser
 import winreg
 from datetime import datetime, timezone
 import subprocess
+import traceback
+
+def log_msg(msg):
+    ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    line = f"[{ts}] {msg}\n"
+    try:
+        with open(os.path.join(APP_DIR, "agy_tray_stdout.log"), "a", encoding="utf-8") as f:
+            f.write(line)
+            f.flush()
+    except Exception:
+        pass
+
+def setup_exception_logging():
+    def handle_exception(exc_type, exc_value, exc_traceback):
+        if issubclass(exc_type, KeyboardInterrupt):
+            sys.__excepthook__(exc_type, exc_value, exc_traceback)
+            return
+        ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        tb = "".join(traceback.format_exception(exc_type, exc_value, exc_traceback))
+        entry = f"[{ts}] CRITICAL UNHANDLED EXCEPTION:\n{tb}\n"
+        try:
+            with open(os.path.join(APP_DIR, "agy_tray_stderr.log"), "a", encoding="utf-8") as f:
+                f.write(entry)
+                f.flush()
+        except Exception:
+            pass
+
+    sys.excepthook = handle_exception
+
+    if hasattr(threading, 'excepthook'):
+        def handle_thread_exception(args):
+            ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            tb = "".join(traceback.format_exception(args.exc_type, args.exc_value, args.exc_traceback))
+            entry = f"[{ts}] THREAD EXCEPTION in {args.thread.name}:\n{tb}\n"
+            try:
+                with open(os.path.join(APP_DIR, "agy_tray_stderr.log"), "a", encoding="utf-8") as f:
+                    f.write(entry)
+                    f.flush()
+            except Exception:
+                pass
+        threading.excepthook = handle_thread_exception
+
+# Redirect stdout/stderr when running via pythonw.exe
+if sys.stdout is None:
+    try:
+        sys.stdout = open(os.path.join(APP_DIR, "agy_tray_stdout.log"), "a", encoding="utf-8", buffering=1)
+    except Exception:
+        sys.stdout = open(os.devnull, "w")
+
+if sys.stderr is None:
+    try:
+        sys.stderr = open(os.path.join(APP_DIR, "agy_tray_stderr.log"), "a", encoding="utf-8", buffering=1)
+    except Exception:
+        sys.stderr = open(os.devnull, "w")
 
 from PyQt5.QtCore import Qt, QTimer, QPoint, QPointF, QRectF, QSize, QByteArray, pyqtSignal, QObject, QEvent
 from PyQt5.QtGui import (
@@ -1313,10 +1354,13 @@ class GlassWindow(QWidget):
 # ----------------- APPLICATION CONTROLLER -----------------
 
 class AppManager(QObject):
+    show_window_signal = pyqtSignal()
+
     def __init__(self, app):
         super().__init__()
         self.app = app
         self.config = load_config()
+        self.show_window_signal.connect(self.show_window)
 
         # Locate agy.exe
         self.agy_path = shutil.which("agy") or shutil.which("agy.exe")
@@ -1469,6 +1513,7 @@ class AppManager(QObject):
             self.window.refresh_finished.emit(success)
 
     def quit_app(self):
+        log_msg("Application exit requested by user via tray menu.")
         self.tray.hide()
         self.app.quit()
 
@@ -1500,14 +1545,17 @@ def start_show_event_listener(app_manager):
                 break
             res = kernel32.WaitForSingleObject(_show_event_handle, 0xFFFFFFFF)
             if res == 0:  # WAIT_OBJECT_0
-                QTimer.singleShot(0, app_manager.show_window)
+                app_manager.show_window_signal.emit()
             else:
                 break
     t = threading.Thread(target=listener, daemon=True)
     t.start()
 
 def main():
+    setup_exception_logging()
+    log_msg("Antigravity Quota Monitor starting...")
     if not check_single_instance():
+        log_msg("Another instance is already running. Signal sent to existing instance. Exiting this process.")
         sys.exit(0)
 
     # Enable native crisp High-DPI rendering on Windows
@@ -1521,7 +1569,10 @@ def main():
     manager = AppManager(app)
     start_show_event_listener(manager)
 
-    sys.exit(app.exec_())
+    log_msg("App initialized successfully, entering Qt event loop.")
+    exit_code = app.exec_()
+    log_msg(f"Qt event loop exited with return code: {exit_code}")
+    sys.exit(exit_code)
 
 if __name__ == "__main__":
     main()
