@@ -76,10 +76,10 @@ class WINDOWCOMPOSITIONATTRIBDATA(ctypes.Structure):
         ("SizeOfData", ctypes.c_size_t),
     ]
 
-def apply_acrylic_glass(hwnd):
+def apply_acrylic_glass(hwnd, opaque=False):
     """
-    Apply native Windows 11 Acrylic blur behind window with true glass transparency
-    and native DWM corner rounding (DWMWCP_ROUND = 2) so there are no square artifacts.
+    Apply native Windows 11 DWM attributes (dark mode, borderless, native rounded corners).
+    Blur-behind is disabled so that the desktop background remains completely sharp and unblurred in transparent mode.
     """
     try:
         user32 = ctypes.windll.user32
@@ -94,15 +94,14 @@ def apply_acrylic_glass(hwnd):
         dwmapi.DwmSetWindowAttribute(hwnd, 34, ctypes.byref(val_border), 4)
 
         # DWMWA_WINDOW_CORNER_PREFERENCE = 33, DWMWCP_ROUND = 2
-        # Perfectly rounds the DWM acrylic backdrop to match Windows 11 (12px radius)
+        # Windows 11 rounds standard windows to 8px radius
         val_corner = ctypes.c_int(2)
         dwmapi.DwmSetWindowAttribute(hwnd, 33, ctypes.byref(val_corner), 4)
 
         accent = ACCENT_POLICY()
-        accent.AccentState = 4  # ACCENT_ENABLE_ACRYLICBLURBEHIND
-        accent.AccentFlags = 2
-        # Transparent acrylic blur with ultra-light dark tint (0x20 alpha)
-        accent.GradientColor = 0x20101624
+        accent.AccentState = 0  # ACCENT_DISABLED: Disables background blur completely
+        accent.AccentFlags = 0
+        accent.GradientColor = 0
         accent.AnimationId = 0
 
         data = WINDOWCOMPOSITIONATTRIBDATA()
@@ -127,6 +126,7 @@ DEFAULT_CONFIG = {
     "background_refresh_seconds": 60,
     "live_refresh_seconds": 10,
     "pinned": False,
+    "opaque_mode": False,
     "win_width": 350,
     "win_height": 450,
     "pos_x": None,
@@ -221,7 +221,7 @@ def create_tray_pixmap(min_fraction=1.0):
     painter.drawArc(5, 5, 54, 54, 90 * 16, -span_angle)
 
     # Center text "AG"
-    font = QFont("Segoe UI Variable Display", 16, QFont.Bold)
+    font = QFont("Segoe UI", 16, QFont.Bold)
     painter.setFont(font)
     painter.setPen(QColor(255, 255, 255))
     painter.drawText(QRectF(0, 1, size, size), Qt.AlignCenter, "AG")
@@ -230,9 +230,9 @@ def create_tray_pixmap(min_fraction=1.0):
     return pixmap
 
 # Helper to format countdown
-def format_ref_countdown(reset_time_str):
+def format_ref_countdown(reset_time_str, compact=False):
     if not reset_time_str:
-        return "100% available"
+        return "100%" if compact else "100% available"
     try:
         t_clean = reset_time_str.replace("Z", "+00:00")
         target = datetime.fromisoformat(t_clean)
@@ -241,19 +241,38 @@ def format_ref_countdown(reset_time_str):
         local_time = target.astimezone()
         local_str = local_time.strftime("%m/%d %H:%M")
         if diff <= 0:
-            return f"100% refreshed ({local_str})"
+            return "100%" if compact else f"100% refreshed ({local_str})"
         d = int(diff // 86400)
         h = int((diff % 86400) // 3600)
         m = int((diff % 3600) // 60)
         s = int(diff % 60)
-        if d > 0:
-            return f"{d}d {h}h {m}m ({local_str})"
-        elif h > 0:
-            return f"{h}h {m}m ({local_str})"
+        if compact:
+            if d > 0:
+                return f"{d}d {h}h"
+            elif h > 0:
+                return f"{h}h {m}m"
+            else:
+                return f"{m}m {s:02d}s"
         else:
-            return f"{m}m {s:02d}s ({local_str})"
+            if d > 0:
+                return f"{d}d {h}h {m}m ({local_str})"
+            elif h > 0:
+                return f"{h}h {m}m ({local_str})"
+            else:
+                return f"{m}m {s:02d}s ({local_str})"
     except Exception:
         return reset_time_str
+
+def format_ref_tooltip(reset_time_str):
+    if not reset_time_str:
+        return "Quota is fully available"
+    try:
+        t_clean = reset_time_str.replace("Z", "+00:00")
+        target = datetime.fromisoformat(t_clean)
+        local_time = target.astimezone()
+        return f"Resets on {local_time.strftime('%b %d, %H:%M')}"
+    except Exception:
+        return ""
 
 # ----------------- HIGH-QUALITY VECTOR ICONS -----------------
 
@@ -279,12 +298,12 @@ SVG_CLAUDE = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill
 </defs>
 </svg>"""
 
-SVG_CLOCK = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#94A3B8" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+SVG_CLOCK = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#cbd5e1" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
 <circle cx="12" cy="12" r="9"/>
 <polyline points="12 7 12 12 15 14"/>
 </svg>"""
 
-SVG_CALENDAR = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#94A3B8" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+SVG_CALENDAR = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#cbd5e1" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
 <rect width="18" height="18" x="3" y="4" rx="3.5"/>
 <line x1="16" x2="16" y1="2" y2="5"/>
 <line x1="8" x2="8" y1="2" y2="5"/>
@@ -296,24 +315,40 @@ SVG_PIN_ON = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill
 <path d="M5 17h14v-1.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V6h1a2 2 0 0 0 0-4H8a2 2 0 0 0 0 4h1v4.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24Z"/>
 </svg>"""
 
-SVG_PIN_OFF = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#CBD5E1" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+SVG_PIN_OFF = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#F1F5F9" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
 <line x1="2" x2="22" y1="2" y2="22"/>
 <path d="M9 9v1.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V17h12"/>
 <path d="M15 9.34V6h1a2 2 0 0 0 0-4H7.89"/>
 <line x1="12" x2="12" y1="17" y2="22"/>
 </svg>"""
 
-SVG_CLOSE = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#CBD5E1" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+SVG_CLOSE = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#F1F5F9" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
 <line x1="18" y1="6" x2="6" y2="18"/>
 <line x1="6" y1="6" x2="18" y2="18"/>
 </svg>"""
 
-SVG_REFRESH = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#CBD5E1" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+SVG_SUN_GLASS = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#F1F5F9" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+<circle cx="12" cy="12" r="4"/>
+<line x1="12" y1="2" x2="12" y2="4"/>
+<line x1="12" y1="20" x2="12" y2="22"/>
+<line x1="4.93" y1="4.93" x2="6.34" y2="6.34"/>
+<line x1="17.66" y1="17.66" x2="19.07" y2="19.07"/>
+<line x1="2" y1="12" x2="4" y2="12"/>
+<line x1="20" y1="12" x2="22" y2="12"/>
+<line x1="4.93" y1="19.07" x2="6.34" y2="17.66"/>
+<line x1="17.66" y1="6.34" x2="19.07" y2="4.93"/>
+</svg>"""
+
+SVG_MOON = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#38BDF8" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+<path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z" fill="#38BDF8" fill-opacity="0.25"/>
+</svg>"""
+
+SVG_REFRESH = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#F1F5F9" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
 <path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"/>
 <path d="M21 3v5h-5"/>
 </svg>"""
 
-SVG_EXTERNAL = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#CBD5E1" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+SVG_EXTERNAL = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#F1F5F9" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
 <path d="M15 3h6v6"/>
 <path d="M10 14 21 3"/>
 <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>
@@ -401,9 +436,9 @@ def create_glass_icon_pixmap(svg_str, size=32, inner_size=16, is_hover=False, is
         border_top = QColor(255, 255, 255, 120)
         border_bot = QColor(255, 255, 255, 35)
     else:
-        bg_color = QColor(255, 255, 255, 16)
-        border_top = QColor(255, 255, 255, 65)
-        border_bot = QColor(255, 255, 255, 18)
+        bg_color = QColor(255, 255, 255, 25)
+        border_top = QColor(255, 255, 255, 85)
+        border_bot = QColor(255, 255, 255, 28)
 
     p.setPen(Qt.NoPen)
     p.setBrush(bg_color)
@@ -490,44 +525,136 @@ class GlassButton(QPushButton):
         self.btn_size = int(size)
         self.inner_size = int(inner_size)
         self.is_active = is_active
+        self.is_spinning = False
+        self.rotation_angle = 0.0
         self.setFixedSize(self.btn_size, self.btn_size)
         self.setCursor(Qt.PointingHandCursor)
-        self.update_icons()
+        self.setStyleSheet("QPushButton { background: transparent; border: none; padding: 0px; }")
+
+        self.spin_timer = QTimer(self)
+        self.spin_timer.timeout.connect(self._on_spin_tick)
+
+    def _on_spin_tick(self):
+        self.rotation_angle = (self.rotation_angle + 20.0) % 360.0
+        self.update()
+
+    def start_spin(self):
+        if not self.is_spinning:
+            self.is_spinning = True
+            self.spin_timer.start(25)  # 40 FPS smooth rotation
+            self.update()
+
+    def stop_spin(self):
+        if self.is_spinning:
+            self.is_spinning = False
+            self.spin_timer.stop()
+            self.rotation_angle = 0.0
+            self.update()
 
     def set_svg(self, svg_str, is_active=False):
         self.svg_str = svg_str
         self.is_active = is_active
-        self.update_icons()
+        self.update()
 
     def set_button_size(self, size, inner_size):
         self.btn_size = int(size)
         self.inner_size = int(inner_size)
         self.setFixedSize(self.btn_size, self.btn_size)
-        self.update_icons()
+        self.update()
 
-    def update_icons(self):
-        icon = QIcon()
-        pix_normal = create_glass_icon_pixmap(self.svg_str, self.btn_size, self.inner_size, False, self.is_active)
-        pix_hover = create_glass_icon_pixmap(self.svg_str, self.btn_size, self.inner_size, True, self.is_active)
-        icon.addPixmap(pix_normal, QIcon.Normal)
-        icon.addPixmap(pix_hover, QIcon.Active)
-        self.setIcon(icon)
-        self.setIconSize(QSize(self.btn_size, self.btn_size))
-        self.setStyleSheet("QPushButton { background: transparent; border: none; padding: 0px; }")
+    def enterEvent(self, event):
+        super().enterEvent(event)
+        self.update()
+
+    def leaveEvent(self, event):
+        super().leaveEvent(event)
+        self.update()
+
+    def paintEvent(self, event):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        p.setRenderHint(QPainter.SmoothPixmapTransform)
+
+        w = float(self.width())
+        h = float(self.height())
+        rect = QRectF(1.0, 1.0, w - 2.0, h - 2.0)
+        radius = (min(w, h) - 2.0) / 2.0
+
+        is_hover = self.underMouse()
+        is_down = self.isDown()
+
+        # Background color based on state
+        if self.is_spinning or is_down:
+            bg_color = QColor(56, 189, 248, 65)
+            border_top = QColor(56, 189, 248, 200)
+            border_bot = QColor(56, 189, 248, 70)
+        elif self.is_active:
+            bg_color = QColor(56, 189, 248, 55)
+            border_top = QColor(56, 189, 248, 160)
+            border_bot = QColor(56, 189, 248, 60)
+        elif is_hover:
+            bg_color = QColor(255, 255, 255, 42)
+            border_top = QColor(255, 255, 255, 130)
+            border_bot = QColor(255, 255, 255, 40)
+        else:
+            bg_color = QColor(255, 255, 255, 22)
+            border_top = QColor(255, 255, 255, 80)
+            border_bot = QColor(255, 255, 255, 25)
+
+        # Glass circular background
+        p.setPen(Qt.NoPen)
+        p.setBrush(bg_color)
+        p.drawRoundedRect(rect, radius, radius)
+
+        # Specular shine highlight
+        grad_shine = QLinearGradient(0, 0, 0, h * 0.6)
+        grad_shine.setColorAt(0.0, QColor(255, 255, 255, 70 if (is_hover or is_down) else 40))
+        grad_shine.setColorAt(1.0, QColor(255, 255, 255, 0))
+        p.setBrush(grad_shine)
+        p.drawRoundedRect(rect, radius, radius)
+
+        # Glass rim border
+        grad_border = QLinearGradient(0, 0, 0, h)
+        grad_border.setColorAt(0.0, border_top)
+        grad_border.setColorAt(1.0, border_bot)
+        p.setPen(QPen(grad_border, 1.0))
+        p.setBrush(Qt.NoBrush)
+        p.drawRoundedRect(rect, radius, radius)
+
+        # Draw SVG icon (with smooth rotation if spinning, scale feedback if pressed)
+        p.save()
+        cx = w / 2.0
+        cy = h / 2.0
+        p.translate(cx, cy)
+        if self.is_spinning and self.rotation_angle != 0.0:
+            p.rotate(self.rotation_angle)
+        elif is_down:
+            p.scale(0.92, 0.92)
+
+        in_sz = float(self.inner_size)
+        renderer = QSvgRenderer(QByteArray(self.svg_str.encode('utf-8')))
+        renderer.render(p, QRectF(-in_sz / 2.0, -in_sz / 2.0, in_sz, in_sz))
+        p.restore()
+        p.end()
 
 # ----------------- ADAPTIVE NON-SCROLLING GLASS QUOTA CARD -----------------
 
 class AdaptiveGlassQuotaCard(QFrame):
-    def __init__(self, group_name, badge_text, brand_svg, accent_color="#38bdf8", parent=None):
+    def __init__(self, group_name, badge_text, brand_svg, accent_color="#38bdf8", is_opaque=False, parent=None):
         super().__init__(parent)
         self.brand_svg = brand_svg
         self.accent_color = accent_color
+        self.is_opaque = is_opaque
+        self.current_radius = 12
+        self.last_frac_5h = 1.0
+        self.last_frac_wk = 1.0
+        self.current_bar_h = 6
         self.setObjectName("adaptiveGlassCard")
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        self.set_card_style(14)
+        self.set_card_style(12)
 
         self.layout = QVBoxLayout(self)
-        self.layout.setContentsMargins(14, 10, 14, 10)
+        self.layout.setContentsMargins(12, 8, 12, 8)
         self.layout.setSpacing(4)
 
         # Header Row: [Glass Medallion] Title      [Glass Badge]
@@ -540,14 +667,14 @@ class AdaptiveGlassQuotaCard(QFrame):
         self.hdr.addWidget(self.brand_icon)
 
         self.title = QLabel(group_name)
-        self.title.setFont(QFont("Segoe UI Variable Display", 11, QFont.Bold))
+        self.title.setFont(QFont("Segoe UI", 11, QFont.Bold))
         self.title.setStyleSheet("color: #ffffff;")
         self.hdr.addWidget(self.title)
 
         self.hdr.addStretch()
 
         self.badge = QLabel(badge_text)
-        self.set_badge_style(2, 7, 8, 8)
+        self.set_badge_style(2, 7, 7, 8)
         self.hdr.addWidget(self.badge)
         self.layout.addLayout(self.hdr)
 
@@ -561,35 +688,35 @@ class AdaptiveGlassQuotaCard(QFrame):
         self.r_5h.addWidget(self.icon_5h)
 
         self.lbl_5h = QLabel("5h Window")
-        self.lbl_5h.setFont(QFont("Segoe UI Variable Text", 9, QFont.DemiBold))
-        self.lbl_5h.setStyleSheet("color: rgba(255, 255, 255, 0.85);")
+        self.lbl_5h.setFont(QFont("Segoe UI", 9, QFont.DemiBold))
+        self.lbl_5h.setStyleSheet("color: #f1f5f9;")
         self.r_5h.addWidget(self.lbl_5h)
 
         self.time_5h_inline = QLabel("Loading...")
-        self.time_5h_inline.setFont(QFont("Segoe UI Variable Small", 8))
-        self.time_5h_inline.setStyleSheet("color: rgba(255, 255, 255, 0.45);")
+        self.time_5h_inline.setFont(QFont("Segoe UI", 8))
+        self.time_5h_inline.setStyleSheet("color: #cbd5e1;")
         self.r_5h.addWidget(self.time_5h_inline)
 
         self.r_5h.addStretch()
 
         self.val_5h = QLabel("--%")
-        self.val_5h.setFont(QFont("Segoe UI Variable Display", 11, QFont.Bold))
+        self.val_5h.setFont(QFont("Segoe UI", 11, QFont.Bold))
         self.val_5h.setStyleSheet("color: #34d399;")
         self.r_5h.addWidget(self.val_5h)
         self.layout.addLayout(self.r_5h)
 
-        # 5h Progress Bar
+        # 5h Progress Bar (default 6px)
         self.bar_5h = QProgressBar()
-        self.bar_5h.setFixedHeight(4)
+        self.bar_5h.setFixedHeight(6)
         self.bar_5h.setTextVisible(False)
         self.bar_5h.setValue(100)
-        self.set_neon_bar(self.bar_5h, 1.0)
+        self.set_neon_bar(self.bar_5h, 1.0, 6)
         self.layout.addWidget(self.bar_5h)
 
         # 5h separate time label (visible in spacious mode)
         self.time_5h_bottom = QLabel("Loading...")
-        self.time_5h_bottom.setFont(QFont("Segoe UI Variable Small", 8))
-        self.time_5h_bottom.setStyleSheet("color: rgba(255, 255, 255, 0.45); margin-left: 2px;")
+        self.time_5h_bottom.setFont(QFont("Segoe UI", 8))
+        self.time_5h_bottom.setStyleSheet("color: #cbd5e1; margin-left: 2px;")
         self.layout.addWidget(self.time_5h_bottom)
 
         # Weekly Metric Row
@@ -602,67 +729,96 @@ class AdaptiveGlassQuotaCard(QFrame):
         self.r_wk.addWidget(self.icon_wk)
 
         self.lbl_wk = QLabel("Weekly Limit")
-        self.lbl_wk.setFont(QFont("Segoe UI Variable Text", 9, QFont.DemiBold))
-        self.lbl_wk.setStyleSheet("color: rgba(255, 255, 255, 0.85);")
+        self.lbl_wk.setFont(QFont("Segoe UI", 9, QFont.DemiBold))
+        self.lbl_wk.setStyleSheet("color: #f1f5f9;")
         self.r_wk.addWidget(self.lbl_wk)
 
         self.time_wk_inline = QLabel("Loading...")
-        self.time_wk_inline.setFont(QFont("Segoe UI Variable Small", 8))
-        self.time_wk_inline.setStyleSheet("color: rgba(255, 255, 255, 0.45);")
+        self.time_wk_inline.setFont(QFont("Segoe UI", 8))
+        self.time_wk_inline.setStyleSheet("color: #cbd5e1;")
         self.r_wk.addWidget(self.time_wk_inline)
 
         self.r_wk.addStretch()
 
         self.val_wk = QLabel("--%")
-        self.val_wk.setFont(QFont("Segoe UI Variable Display", 11, QFont.Bold))
+        self.val_wk.setFont(QFont("Segoe UI", 11, QFont.Bold))
         self.val_wk.setStyleSheet("color: #34d399;")
         self.r_wk.addWidget(self.val_wk)
         self.layout.addLayout(self.r_wk)
 
-        # Weekly Progress Bar
+        # Weekly Progress Bar (default 6px)
         self.bar_wk = QProgressBar()
-        self.bar_wk.setFixedHeight(4)
+        self.bar_wk.setFixedHeight(6)
         self.bar_wk.setTextVisible(False)
         self.bar_wk.setValue(100)
-        self.set_neon_bar(self.bar_wk, 1.0)
+        self.set_neon_bar(self.bar_wk, 1.0, 6)
         self.layout.addWidget(self.bar_wk)
 
         # Weekly separate time label
         self.time_wk_bottom = QLabel("Loading...")
-        self.time_wk_bottom.setFont(QFont("Segoe UI Variable Small", 8))
-        self.time_wk_bottom.setStyleSheet("color: rgba(255, 255, 255, 0.45); margin-left: 2px;")
+        self.time_wk_bottom.setFont(QFont("Segoe UI", 8))
+        self.time_wk_bottom.setStyleSheet("color: #cbd5e1; margin-left: 2px;")
         self.layout.addWidget(self.time_wk_bottom)
 
         self.bucket_5h_reset = None
         self.bucket_wk_reset = None
 
     def set_card_style(self, radius):
-        self.setStyleSheet(f"""
-            #adaptiveGlassCard {{
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1, 
-                    stop:0 rgba(255, 255, 255, 0.08), 
-                    stop:0.1 rgba(255, 255, 255, 0.02), 
-                    stop:1 rgba(0, 0, 0, 0.22));
-                border: 1px solid rgba(255, 255, 255, 0.09);
-                border-top: 1px solid rgba(255, 255, 255, 0.24);
-                border-radius: {radius}px;
-            }}
-        """)
+        self.current_radius = radius
+        if getattr(self, 'is_opaque', False):
+            self.setStyleSheet(f"""
+                #adaptiveGlassCard {{
+                    background: qlineargradient(x1:0, y1:0, x2:0, y2:1, 
+                        stop:0 rgba(36, 36, 40, 0.95), 
+                        stop:1 rgba(22, 22, 25, 0.98));
+                    border: 1px solid rgba(255, 255, 255, 0.08);
+                    border-top: 1px solid rgba(255, 255, 255, 0.16);
+                    border-radius: {radius}px;
+                }}
+            """)
+        else:
+            self.setStyleSheet(f"""
+                #adaptiveGlassCard {{
+                    background: qlineargradient(x1:0, y1:0, x2:0, y2:1, 
+                        stop:0 rgba(36, 40, 52, 0.72), 
+                        stop:0.4 rgba(26, 29, 38, 0.70), 
+                        stop:1 rgba(18, 20, 26, 0.76));
+                    border: 1px solid rgba(255, 255, 255, 0.12);
+                    border-top: 1px solid rgba(255, 255, 255, 0.28);
+                    border-radius: {radius}px;
+                }}
+            """)
+
+    def set_opaque_mode(self, opaque: bool):
+        self.is_opaque = opaque
+        self.set_card_style(self.current_radius)
+        pt = self.badge.font().pointSize() or 8
+        self.set_badge_style(2, 7, 7, pt)
 
     def set_badge_style(self, pad_v, pad_h, radius, font_pt):
-        self.badge.setFont(QFont("Segoe UI Variable Small", font_pt, QFont.Bold))
-        self.badge.setStyleSheet(f"""
-            background: qlineargradient(x1:0, y1:0, x2:0, y2:1, 
-                stop:0 rgba(255, 255, 255, 0.09), 
-                stop:1 rgba(255, 255, 255, 0.03));
-            color: {self.accent_color};
-            border: 1px solid rgba(255, 255, 255, 0.12);
-            border-top: 1px solid rgba(255, 255, 255, 0.25);
-            padding: {pad_v}px {pad_h}px;
-            border-radius: {radius}px;
-        """)
+        self.badge.setFont(QFont("Segoe UI", font_pt, QFont.Bold))
+        if getattr(self, 'is_opaque', False):
+            self.badge.setStyleSheet(f"""
+                background: rgba(45, 45, 52, 0.90);
+                color: {self.accent_color};
+                border: 1px solid rgba(255, 255, 255, 0.12);
+                border-top: 1px solid rgba(255, 255, 255, 0.20);
+                padding: {pad_v}px {pad_h}px;
+                border-radius: {radius}px;
+            """)
+        else:
+            self.badge.setStyleSheet(f"""
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1, 
+                    stop:0 rgba(255, 255, 255, 0.15), 
+                    stop:1 rgba(255, 255, 255, 0.05));
+                color: {self.accent_color};
+                border: 1px solid rgba(255, 255, 255, 0.16);
+                border-top: 1px solid rgba(255, 255, 255, 0.30);
+                padding: {pad_v}px {pad_h}px;
+                border-radius: {radius}px;
+            """)
 
-    def set_neon_bar(self, bar, frac):
+    def set_neon_bar(self, bar, frac, h=6):
         if frac > 0.5:
             grad = "qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #059669, stop:0.5 #10b981, stop:1 #34d399)"
         elif frac > 0.2:
@@ -670,58 +826,61 @@ class AdaptiveGlassQuotaCard(QFrame):
         else:
             grad = "qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #dc2626, stop:0.5 #ef4444, stop:1 #f87171)"
 
+        rad = max(2, h // 2)
         bar.setStyleSheet(f"""
             QProgressBar {{
-                background: rgba(0, 0, 0, 0.35);
-                border: 1px solid rgba(255, 255, 255, 0.06);
-                border-radius: 2px;
+                background: rgba(255, 255, 255, 0.10);
+                border: 1px solid rgba(255, 255, 255, 0.05);
+                border-radius: {rad}px;
             }}
             QProgressBar::chunk {{
                 background: {grad};
-                border-radius: 2px;
+                border-radius: {rad}px;
             }}
         """)
 
     def update_data(self, b_5h, b_wk):
         if b_5h:
             frac = b_5h.get("remaining_fraction", 1.0)
+            self.last_frac_5h = frac
             pct = int(round(frac * 100))
             self.val_5h.setText(f"{pct}%")
             self.bar_5h.setValue(pct)
             color = "#34d399" if frac > 0.5 else ("#fbbf24" if frac > 0.2 else "#f87171")
             self.val_5h.setStyleSheet(f"color: {color}; font-weight: bold;")
-            self.set_neon_bar(self.bar_5h, frac)
+            self.set_neon_bar(self.bar_5h, frac, self.current_bar_h)
             self.bucket_5h_reset = b_5h.get("reset_time")
-            t_str = format_ref_countdown(self.bucket_5h_reset)
-            self.time_5h_inline.setText(t_str)
-            self.time_5h_bottom.setText(t_str)
+            self.time_5h_inline.setText(format_ref_countdown(self.bucket_5h_reset, compact=True))
+            self.time_5h_bottom.setText(f"Resets in {format_ref_countdown(self.bucket_5h_reset, compact=False)}")
+            self.time_5h_inline.setToolTip(format_ref_tooltip(self.bucket_5h_reset))
+            self.time_5h_bottom.setToolTip(format_ref_tooltip(self.bucket_5h_reset))
 
         if b_wk:
             frac = b_wk.get("remaining_fraction", 1.0)
+            self.last_frac_wk = frac
             pct = int(round(frac * 100))
             self.val_wk.setText(f"{pct}%")
             self.bar_wk.setValue(pct)
             color = "#34d399" if frac > 0.5 else ("#fbbf24" if frac > 0.2 else "#f87171")
             self.val_wk.setStyleSheet(f"color: {color}; font-weight: bold;")
-            self.set_neon_bar(self.bar_wk, frac)
+            self.set_neon_bar(self.bar_wk, frac, self.current_bar_h)
             self.bucket_wk_reset = b_wk.get("reset_time")
-            t_str = format_ref_countdown(self.bucket_wk_reset)
-            self.time_wk_inline.setText(t_str)
-            self.time_wk_bottom.setText(t_str)
+            self.time_wk_inline.setText(format_ref_countdown(self.bucket_wk_reset, compact=True))
+            self.time_wk_bottom.setText(f"Resets in {format_ref_countdown(self.bucket_wk_reset, compact=False)}")
+            self.time_wk_inline.setToolTip(format_ref_tooltip(self.bucket_wk_reset))
+            self.time_wk_bottom.setToolTip(format_ref_tooltip(self.bucket_wk_reset))
 
     def tick_second(self):
         if self.bucket_5h_reset:
-            t_str = format_ref_countdown(self.bucket_5h_reset)
-            self.time_5h_inline.setText(t_str)
-            self.time_5h_bottom.setText(t_str)
+            self.time_5h_inline.setText(format_ref_countdown(self.bucket_5h_reset, compact=True))
+            self.time_5h_bottom.setText(f"Resets in {format_ref_countdown(self.bucket_5h_reset, compact=False)}")
         if self.bucket_wk_reset:
-            t_str = format_ref_countdown(self.bucket_wk_reset)
-            self.time_wk_inline.setText(t_str)
-            self.time_wk_bottom.setText(t_str)
+            self.time_wk_inline.setText(format_ref_countdown(self.bucket_wk_reset, compact=True))
+            self.time_wk_bottom.setText(f"Resets in {format_ref_countdown(self.bucket_wk_reset, compact=False)}")
 
     def update_scaling(self, scale, win_h):
-        pad_h = max(6, int(14 * scale))
-        pad_v = max(3, int(10 * scale))
+        pad_h = max(8, int(14 * scale))
+        pad_v = max(4, int(10 * scale))
         spacing = max(2, int(4 * scale))
         self.layout.setContentsMargins(pad_h, pad_v, pad_h, pad_v)
         self.layout.setSpacing(spacing)
@@ -730,45 +889,43 @@ class AdaptiveGlassQuotaCard(QFrame):
         self.set_card_style(card_radius)
 
         # Brand medallion
-        med_sz = max(16, int(26 * scale))
-        in_sz = max(9, int(15 * scale))
+        med_sz = max(20, int(26 * scale))
+        in_sz = max(11, int(15 * scale))
         self.brand_icon.setFixedSize(med_sz, med_sz)
         self.brand_icon.setPixmap(create_glass_brand_medallion(self.brand_svg, med_sz, in_sz, self.accent_color))
 
-        # Title
-        t_pt = max(7, int(11 * scale))
-        self.title.setFont(QFont("Segoe UI Variable Display", t_pt, QFont.Bold))
+        # Title: Segoe UI, crisp minimum 10pt Bold
+        t_pt = max(10, int(round(12.0 * scale)))
+        self.title.setFont(QFont("Segoe UI", t_pt, QFont.Bold))
 
-        # Badge
+        # Badge: Segoe UI, crisp minimum 7pt Bold
         b_pad_v = max(1, int(2 * scale))
-        b_pad_h = max(3, int(7 * scale))
-        b_rad = max(5, int(8 * scale))
-        b_pt = max(6, int(8 * scale))
+        b_pad_h = max(4, int(7 * scale))
+        b_rad = max(6, int(8 * scale))
+        b_pt = max(7, int(round(8.5 * scale)))
         self.set_badge_style(b_pad_v, b_pad_h, b_rad, b_pt)
 
         # Metric icons
-        icon_sz = max(9, int(13 * scale))
+        icon_sz = max(11, int(13 * scale))
         self.icon_5h.setFixedSize(icon_sz, icon_sz)
         self.icon_5h.setPixmap(render_svg_to_pixmap(SVG_CLOCK, icon_sz, icon_sz))
         self.icon_wk.setFixedSize(icon_sz, icon_sz)
         self.icon_wk.setPixmap(render_svg_to_pixmap(SVG_CALENDAR, icon_sz, icon_sz))
 
-        # Metric labels & values
-        lbl_pt = max(6, int(9 * scale))
-        val_pt = max(7, int(11 * scale))
-        self.lbl_5h.setFont(QFont("Segoe UI Variable Text", lbl_pt, QFont.DemiBold))
-        self.lbl_wk.setFont(QFont("Segoe UI Variable Text", lbl_pt, QFont.DemiBold))
-        self.val_5h.setFont(QFont("Segoe UI Variable Display", val_pt, QFont.Bold))
-        self.val_wk.setFont(QFont("Segoe UI Variable Display", val_pt, QFont.Bold))
+        # Metric labels & values: Segoe UI, crisp minimum 9pt and 10pt
+        lbl_pt = max(9, int(round(10.0 * scale)))
+        val_pt = max(10, int(round(12.0 * scale)))
+        self.lbl_5h.setFont(QFont("Segoe UI", lbl_pt, QFont.DemiBold))
+        self.lbl_wk.setFont(QFont("Segoe UI", lbl_pt, QFont.DemiBold))
+        self.val_5h.setFont(QFont("Segoe UI", val_pt, QFont.Bold))
+        self.val_wk.setFont(QFont("Segoe UI", val_pt, QFont.Bold))
 
         # Adaptive time display:
-        # If height >= 380px: Show spacious layout with time under the bar
-        # If height < 380px: Show inline time right next to "5h Window", saving full rows so window can shrink!
-        time_pt = max(5, int(8 * scale))
-        self.time_5h_inline.setFont(QFont("Segoe UI Variable Small", time_pt))
-        self.time_5h_bottom.setFont(QFont("Segoe UI Variable Small", time_pt))
-        self.time_wk_inline.setFont(QFont("Segoe UI Variable Small", time_pt))
-        self.time_wk_bottom.setFont(QFont("Segoe UI Variable Small", time_pt))
+        time_pt = max(8, int(round(9.0 * scale)))
+        self.time_5h_inline.setFont(QFont("Segoe UI", time_pt))
+        self.time_5h_bottom.setFont(QFont("Segoe UI", time_pt))
+        self.time_wk_inline.setFont(QFont("Segoe UI", time_pt))
+        self.time_wk_bottom.setFont(QFont("Segoe UI", time_pt))
 
         if win_h >= 380:
             self.time_5h_inline.setVisible(False)
@@ -781,22 +938,28 @@ class AdaptiveGlassQuotaCard(QFrame):
             self.time_5h_bottom.setVisible(False)
             self.time_wk_bottom.setVisible(False)
 
-        # Progress bars
-        bar_h = max(2, int(4 * scale))
+        # Progress bars: significantly thicker (minimum 6px, up to 8px)
+        bar_h = max(6, int(round(8 * scale)))
+        self.current_bar_h = bar_h
         self.bar_5h.setFixedHeight(bar_h)
         self.bar_wk.setFixedHeight(bar_h)
+        self.set_neon_bar(self.bar_5h, self.last_frac_5h, bar_h)
+        self.set_neon_bar(self.bar_wk, self.last_frac_wk, bar_h)
 
 # ----------------- MAIN GLASS FLOATING WINDOW (ZERO SCROLLING) -----------------
 
 class GlassWindow(QWidget):
     BORDER_WIDTH = 9
     data_received = pyqtSignal(dict)
+    refresh_started = pyqtSignal()
+    refresh_finished = pyqtSignal(bool)
 
     def __init__(self, app_manager):
         super().__init__()
         self.app_manager = app_manager
         self.config = load_config()
         self.is_pinned = self.config.get("pinned", False)
+        self.is_opaque = self.config.get("opaque_mode", False)
         self._has_been_active = False
 
         self.setWindowFlags(Qt.Window | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint)
@@ -820,8 +983,10 @@ class GlassWindow(QWidget):
 
         self.init_ui()
 
-        # Connect data signal
+        # Connect signals
         self.data_received.connect(self.on_data_received)
+        self.refresh_started.connect(self.on_refresh_started)
+        self.refresh_finished.connect(self.on_refresh_finished)
 
         # 1-second countdown ticker
         self.ticker = QTimer(self)
@@ -851,11 +1016,17 @@ class GlassWindow(QWidget):
         self.hdr.addWidget(self.logo_lbl)
 
         self.title_lbl = QLabel("Antigravity Quota")
-        self.title_lbl.setFont(QFont("Segoe UI Variable Display", 11, QFont.Bold))
+        self.title_lbl.setFont(QFont("Segoe UI", 11, QFont.Bold))
         self.title_lbl.setStyleSheet("color: #ffffff;")
         self.hdr.addWidget(self.title_lbl)
 
         self.hdr.addStretch()
+
+        # Glass Mode Toggle Button (Transparent Glass / Dark Mode)
+        self.btn_theme = GlassButton(SVG_MOON if self.is_opaque else SVG_SUN_GLASS, size=28, inner_size=14, is_active=self.is_opaque)
+        self.update_theme_button()
+        self.btn_theme.clicked.connect(self.toggle_theme)
+        self.hdr.addWidget(self.btn_theme)
 
         # Glass Pin Button
         pin_svg = SVG_PIN_ON if self.is_pinned else SVG_PIN_OFF
@@ -874,10 +1045,10 @@ class GlassWindow(QWidget):
 
         # 2. CARDS DIRECTLY IN MAIN LAYOUT - ABSOLUTELY ZERO SCROLLING!
         # Both Gemini and Claude cards always fit and scale fluidly to the window
-        self.card_gemini = AdaptiveGlassQuotaCard("Gemini Models", "FLASH & PRO", SVG_GEMINI, "#38bdf8", self)
+        self.card_gemini = AdaptiveGlassQuotaCard("Gemini Models", "FLASH & PRO", SVG_GEMINI, "#38bdf8", self.is_opaque, self)
         self.main_layout.addWidget(self.card_gemini)
 
-        self.card_claude = AdaptiveGlassQuotaCard("Claude & GPT", "OPUS & SONNET", SVG_CLAUDE, "#fb923c", self)
+        self.card_claude = AdaptiveGlassQuotaCard("Claude & GPT", "OPUS & SONNET", SVG_CLAUDE, "#fb923c", self.is_opaque, self)
         self.main_layout.addWidget(self.card_claude)
 
         # 3. Footer Bar: [● Live synchronized]      [Refresh] [External]
@@ -890,8 +1061,8 @@ class GlassWindow(QWidget):
         self.footer.addWidget(self.live_dot)
 
         self.lbl_status = QLabel("Live synchronized")
-        self.lbl_status.setFont(QFont("Segoe UI Variable Text", 8, QFont.Medium))
-        self.lbl_status.setStyleSheet("color: rgba(255, 255, 255, 0.45);")
+        self.lbl_status.setFont(QFont("Segoe UI", 8, QFont.Medium))
+        self.lbl_status.setStyleSheet("color: #cbd5e1;")
         self.footer.addWidget(self.lbl_status)
 
         self.footer.addStretch()
@@ -909,6 +1080,28 @@ class GlassWindow(QWidget):
         self.footer.addWidget(self.btn_ext)
 
         self.main_layout.addLayout(self.footer)
+
+    def update_theme_button(self):
+        if self.is_opaque:
+            self.btn_theme.set_svg(SVG_MOON, is_active=True)
+            self.btn_theme.setToolTip("Switch to Transparent Glass Mode")
+        else:
+            self.btn_theme.set_svg(SVG_SUN_GLASS, is_active=False)
+            self.btn_theme.setToolTip("Switch to Dark Mode")
+
+    def toggle_theme(self):
+        self.is_opaque = not self.is_opaque
+        self.config["opaque_mode"] = self.is_opaque
+        save_config(self.config)
+        self.set_opaque_mode(self.is_opaque)
+
+    def set_opaque_mode(self, opaque: bool):
+        self.is_opaque = opaque
+        self.card_gemini.set_opaque_mode(opaque)
+        self.card_claude.set_opaque_mode(opaque)
+        self.update_theme_button()
+        apply_acrylic_glass(int(self.winId()), opaque=opaque)
+        self.update()
 
     def open_repo(self):
         webbrowser.open("https://github.com/I-N-O-A/antigravity-quota-monitor")
@@ -931,28 +1124,54 @@ class GlassWindow(QWidget):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
 
-        rect = QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5)
-        path = QPainterPath()
-        # Radius 12.0 perfectly matches Windows 11 DWMWCP_ROUND (2)
-        path.addRoundedRect(rect, 12.0, 12.0)
+        w = float(self.width())
+        h = float(self.height())
+        r = 8.0  # Native Windows 11 DWMWCP_ROUND corner radius (8px)
 
-        # 1. Dark glass tint: alpha 45 gives high-end smoked glass contrast with acrylic blur
-        painter.fillPath(path, QColor(14, 20, 32, 45))
+        # 1. Base fill covering full window bounds right to DWM corner clip (zero artifacts)
+        path_fill = QPainterPath()
+        path_fill.addRoundedRect(QRectF(0.0, 0.0, w, h), r, r)
 
-        # 2. Specular glass reflection gradient at top edge
-        grad = QLinearGradient(0, 0, 0, min(100, int(self.height() * 0.4)))
-        grad.setColorAt(0.0, QColor(255, 255, 255, 28))
-        grad.setColorAt(1.0, QColor(255, 255, 255, 0))
-        painter.fillPath(path, grad)
+        if self.is_opaque:
+            # Neutral deep dark mode charcoal matching cards in opaque mode
+            grad_fill = QLinearGradient(0, 0, 0, h)
+            grad_fill.setColorAt(0.0, QColor(24, 25, 30, 254))
+            grad_fill.setColorAt(1.0, QColor(14, 15, 18, 254))
+            painter.fillPath(path_fill, grad_fill)
+        else:
+            # Deep dark midnight glass harmonized with the card content palette
+            grad_fill = QLinearGradient(0, 0, 0, h)
+            grad_fill.setColorAt(0.0, QColor(18, 22, 30, 220))
+            grad_fill.setColorAt(0.5, QColor(14, 17, 24, 225))
+            grad_fill.setColorAt(1.0, QColor(10, 12, 17, 235))
+            painter.fillPath(path_fill, grad_fill)
 
-        # 3. Delicate glass border highlight
-        grad_border = QLinearGradient(0, 0, 0, self.height())
-        grad_border.setColorAt(0.0, QColor(255, 255, 255, 60))
-        grad_border.setColorAt(0.5, QColor(255, 255, 255, 25))
-        grad_border.setColorAt(1.0, QColor(255, 255, 255, 12))
+        # 2. Specular glass reflection gradient at top edge (subtle crisp reflection)
+        grad_shine = QLinearGradient(0, 0, 0, min(80.0, h * 0.3))
+        if self.is_opaque:
+            grad_shine.setColorAt(0.0, QColor(255, 255, 255, 14))
+        else:
+            grad_shine.setColorAt(0.0, QColor(255, 255, 255, 16))
+        grad_shine.setColorAt(1.0, QColor(255, 255, 255, 0))
+        painter.fillPath(path_fill, grad_shine)
+
+        # 3. Delicate glass border highlight (inset by 0.5px for crisp 1px stroke, matching card border)
+        rect_stroke = QRectF(0.5, 0.5, w - 1.0, h - 1.0)
+        path_stroke = QPainterPath()
+        path_stroke.addRoundedRect(rect_stroke, r, r)
+
+        grad_border = QLinearGradient(0, 0, 0, h)
+        if self.is_opaque:
+            grad_border.setColorAt(0.0, QColor(255, 255, 255, 28))
+            grad_border.setColorAt(0.5, QColor(255, 255, 255, 14))
+            grad_border.setColorAt(1.0, QColor(255, 255, 255, 7))
+        else:
+            grad_border.setColorAt(0.0, QColor(255, 255, 255, 32))
+            grad_border.setColorAt(0.5, QColor(255, 255, 255, 15))
+            grad_border.setColorAt(1.0, QColor(255, 255, 255, 8))
         pen = QPen(grad_border, 1.0)
         painter.setPen(pen)
-        painter.drawPath(path)
+        painter.drawPath(path_stroke)
 
     def nativeEvent(self, eventType, message):
         msg = wintypes.MSG.from_address(message.__int__())
@@ -989,7 +1208,7 @@ class GlassWindow(QWidget):
 
             # Top header bar (Drag to move, excluding buttons)
             header_h = min(40, max(24, int(h * 0.14)))
-            btn_clearance = min(75, max(45, int(w * 0.28)))
+            btn_clearance = min(115, max(70, int(w * 0.35)))
             if p.y() <= header_h and p.x() < (w - btn_clearance):
                 return True, 2   # HTCAPTION
 
@@ -1016,21 +1235,22 @@ class GlassWindow(QWidget):
         self.main_layout.setSpacing(sp)
 
         # Header elements scaling
-        logo_sz = max(16, int(28 * scale))
+        logo_sz = max(18, int(28 * scale))
         self.logo_lbl.setPixmap(create_antigravity_glass_logo(logo_sz))
 
-        t_pt = max(7, int(11 * scale))
-        self.title_lbl.setFont(QFont("Segoe UI Variable Display", t_pt, QFont.Bold))
+        t_pt = max(10, int(round(12.0 * scale)))
+        self.title_lbl.setFont(QFont("Segoe UI", t_pt, QFont.Bold))
 
-        btn_sz = max(18, int(28 * scale))
-        btn_inner = max(9, int(14 * scale))
+        btn_sz = max(22, int(28 * scale))
+        btn_inner = max(11, int(14 * scale))
+        self.btn_theme.set_button_size(btn_sz, btn_inner)
         self.btn_pin.set_button_size(btn_sz, btn_inner)
         self.btn_close.set_button_size(btn_sz, btn_inner)
         self.btn_refresh.set_button_size(btn_sz, btn_inner)
         self.btn_ext.set_button_size(btn_sz, btn_inner)
 
-        status_pt = max(6, int(8 * scale))
-        self.lbl_status.setFont(QFont("Segoe UI Variable Text", status_pt, QFont.Medium))
+        status_pt = max(8, int(round(9.0 * scale)))
+        self.lbl_status.setFont(QFont("Segoe UI", status_pt, QFont.Medium))
 
         # Cards scaling
         self.card_gemini.update_scaling(scale, h)
@@ -1042,9 +1262,26 @@ class GlassWindow(QWidget):
         self.config["pos_y"] = self.y()
         save_config(self.config)
 
+    def on_refresh_started(self):
+        self.btn_refresh.start_spin()
+        self.lbl_status.setText("Refreshing quotas...")
+        self.live_dot.setStyleSheet("color: #38bdf8; font-size: 10px;")
+
+    def on_refresh_finished(self, success):
+        self.btn_refresh.stop_spin()
+        if success:
+            self.last_sync_ts = time.time()
+            self.lbl_status.setText("Live synchronized")
+            self.live_dot.setStyleSheet("color: #34d399; font-size: 10px;")
+        else:
+            self.lbl_status.setText("Sync failed")
+            self.live_dot.setStyleSheet("color: #f87171; font-size: 10px;")
+
     def on_second_tick(self):
         self.card_gemini.tick_second()
         self.card_claude.tick_second()
+        if getattr(self.app_manager, '_is_refreshing', False):
+            return
         diff = int(time.time() - self.last_sync_ts)
         if diff < 5:
             self.lbl_status.setText("Live synchronized")
@@ -1100,13 +1337,15 @@ class AppManager(QObject):
         self.tray.setToolTip("Antigravity Quota Monitor")
         self.tray.activated.connect(self.on_tray_activated)
 
+        self._is_refreshing = False
+
         # Context Menu
         self.menu = QMenu()
         self.menu.setStyleSheet("""
             QMenu {
-                background: #182030;
-                color: #f1f5f9;
-                border: 1px solid rgba(255, 255, 255, 0.15);
+                background: #18181b;
+                color: #f4f4f5;
+                border: 1px solid rgba(255, 255, 255, 0.12);
                 border-radius: 8px;
                 padding: 4px;
             }
@@ -1116,7 +1355,7 @@ class AppManager(QObject):
                 font-weight: 500;
             }
             QMenu::item:selected {
-                background: #3b82f6;
+                background: #27272a;
                 color: #ffffff;
             }
             QMenu::separator {
@@ -1187,7 +1426,7 @@ class AppManager(QObject):
             ctypes.windll.user32.SetForegroundWindow(hwnd)
         except Exception:
             pass
-        apply_acrylic_glass(int(self.window.winId()))
+        apply_acrylic_glass(int(self.window.winId()), opaque=self.config.get("opaque_mode", False))
         self.trigger_refresh()
 
     def toggle_autostart(self):
@@ -1197,12 +1436,17 @@ class AppManager(QObject):
             self.act_autostart.setChecked(not current)
 
     def trigger_refresh(self):
+        if getattr(self, '_is_refreshing', False):
+            return
+        self._is_refreshing = True
+        self.window.refresh_started.emit()
         threading.Thread(target=self._fetch_worker, daemon=True).start()
 
     def on_bg_timer(self):
         self.trigger_refresh()
 
     def _fetch_worker(self):
+        success = False
         try:
             CREATE_NO_WINDOW = 0x08000000
             res = subprocess.run(
@@ -1217,8 +1461,12 @@ class AppManager(QObject):
                 cmd_data = parsed.get("command", {}).get("data", {})
                 if cmd_data:
                     self.window.data_received.emit(cmd_data)
+                    success = True
         except Exception:
             pass
+        finally:
+            self._is_refreshing = False
+            self.window.refresh_finished.emit(success)
 
     def quit_app(self):
         self.tray.hide()
@@ -1248,9 +1496,13 @@ def start_show_event_listener(app_manager):
     def listener():
         kernel32 = ctypes.windll.kernel32
         while True:
+            if not _show_event_handle:
+                break
             res = kernel32.WaitForSingleObject(_show_event_handle, 0xFFFFFFFF)
             if res == 0:  # WAIT_OBJECT_0
                 QTimer.singleShot(0, app_manager.show_window)
+            else:
+                break
     t = threading.Thread(target=listener, daemon=True)
     t.start()
 
@@ -1258,8 +1510,13 @@ def main():
     if not check_single_instance():
         sys.exit(0)
 
+    # Enable native crisp High-DPI rendering on Windows
+    QApplication.setAttribute(Qt.AA_EnableHighDpiScaling, True)
+    QApplication.setAttribute(Qt.AA_UseHighDpiPixmaps, True)
+
     app = QApplication(sys.argv)
     app.setQuitOnLastWindowClosed(False)
+    app.setFont(QFont("Segoe UI", 9))
 
     manager = AppManager(app)
     start_show_event_listener(manager)
