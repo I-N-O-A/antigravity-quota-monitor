@@ -1003,7 +1003,7 @@ class GlassWindow(QWidget):
         self.is_opaque = self.config.get("opaque_mode", False)
         self._has_been_active = False
 
-        self.setWindowFlags(Qt.Window | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint)
+        self.setWindowFlags(Qt.Tool | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint)
         self.setWindowTitle("Antigravity Quota Monitor")
         self.setAttribute(Qt.WA_TranslucentBackground)
 
@@ -1221,36 +1221,51 @@ class GlassWindow(QWidget):
         if msg.message == WM_NCHITTEST:
             x = ctypes.c_short(msg.lParam & 0xFFFF).value
             y = ctypes.c_short((msg.lParam >> 16) & 0xFFFF).value
-            
-            p = self.mapFromGlobal(QPoint(x, y))
+
+            # Convert physical screen coordinates to window-relative logical coordinates (High-DPI safe)
+            pt = wintypes.POINT(x, y)
+            ctypes.windll.user32.ScreenToClient(int(self.winId()), ctypes.byref(pt))
+            dpr = self.devicePixelRatioF() or 1.0
+            px = pt.x / dpr
+            py = pt.y / dpr
+
             w = self.width()
             h = self.height()
             bw = self.BORDER_WIDTH
 
+            # If cursor is completely outside window bounds, let default handler process it
+            if px < 0 or px >= w or py < 0 or py >= h:
+                return super().nativeEvent(eventType, message)
+
             # 4 Corners (Native cursor feedback and resizing)
-            if p.x() <= bw and p.y() <= bw:
+            if px <= bw and py <= bw:
                 return True, 13  # HTTOPLEFT
-            elif p.x() >= w - bw and p.y() <= bw:
+            elif px >= w - bw and py <= bw:
                 return True, 14  # HTTOPRIGHT
-            elif p.x() <= bw and p.y() >= h - bw:
+            elif px <= bw and py >= h - bw:
                 return True, 16  # HTBOTTOMLEFT
-            elif p.x() >= w - bw and p.y() >= h - bw:
+            elif px >= w - bw and py >= h - bw:
                 return True, 17  # HTBOTTOMRIGHT
 
             # 4 Borders
-            if p.x() <= bw:
+            if px <= bw:
                 return True, 10  # HTLEFT
-            elif p.x() >= w - bw:
+            elif px >= w - bw:
                 return True, 11  # HTRIGHT
-            elif p.y() <= bw:
+            elif py <= bw:
                 return True, 12  # HTTOP
-            elif p.y() >= h - bw:
+            elif py >= h - bw:
                 return True, 15  # HTBOTTOM
+
+            # Don't capture drag on clickable child widgets (buttons)
+            child = self.childAt(QPoint(int(px), int(py)))
+            if child and (isinstance(child, QPushButton) or isinstance(child.parent(), QPushButton)):
+                return super().nativeEvent(eventType, message)
 
             # Top header bar (Drag to move, excluding buttons)
             header_h = min(40, max(24, int(h * 0.14)))
             btn_clearance = min(115, max(70, int(w * 0.35)))
-            if p.y() <= header_h and p.x() < (w - btn_clearance):
+            if py <= header_h and px < (w - btn_clearance):
                 return True, 2   # HTCAPTION
 
         return super().nativeEvent(eventType, message)
@@ -1558,6 +1573,12 @@ def main():
         log_msg("Another instance is already running. Signal sent to existing instance. Exiting this process.")
         sys.exit(0)
 
+    # Set explicit AppUserModelID so Windows identifies the application properly
+    try:
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("Antigravity.QuotaMonitor.Tray.1.0")
+    except Exception:
+        pass
+
     # Enable native crisp High-DPI rendering on Windows
     QApplication.setAttribute(Qt.AA_EnableHighDpiScaling, True)
     QApplication.setAttribute(Qt.AA_UseHighDpiPixmaps, True)
@@ -1565,6 +1586,10 @@ def main():
     app = QApplication(sys.argv)
     app.setQuitOnLastWindowClosed(False)
     app.setFont(QFont("Segoe UI", 9))
+
+    icon_path = os.path.join(APP_DIR, "icon.ico")
+    if os.path.exists(icon_path):
+        app.setWindowIcon(QIcon(icon_path))
 
     manager = AppManager(app)
     start_show_event_listener(manager)
